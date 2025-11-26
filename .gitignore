@@ -1,0 +1,146 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv
+.ENV
+env.bak/
+venv.bak/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+*.env
+
+# Database files (keep structure, exclude data)
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+Data/*.db
+Data/*.db-shm
+Data/*.db-wal
+
+# Logs
+*.log
+logs/
+*.log.*
+
+# Model files and cache
+*.pkl
+*.pickle
+*.h5
+*.onnx
+*.pt
+*.pth
+.cache/
+models/
+checkpoints/
+
+# Node.js / Frontend
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnp
+.pnp.js
+frontend/dist/
+frontend/build/
+frontend/.next/
+frontend/out/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+*.ipynb
+
+# Audio/Media files (exclude large files, keep small samples)
+# Exclude most audio files but allow small sample files in Data/
+*.mp3
+*.m4a
+*.flac
+*.ogg
+*.wav
+!Data/harvard.wav
+!Data/jackhammer.wav
+
+# Generated files
+compliance_report.pdf
+*.pdf
+reports/
+temp/
+tmp/
+*.tmp
+
+# OS files
+Thumbs.db
+.DS_Store
+.Spotlight-V100
+.Trashes
+
+# Backup files
+*.bak
+*.backup
+*.old
+*~
+
+# ML/AI specific
+wandb/
+mlruns/
+.mlflow/
+
+# Email and sensitive configs
+email_config.json
+secrets.json
+config.json
+
+# Streamlit
+.streamlit/
+
+# Coverage reports
+htmlcov/
+.coverage
+.coverage.*
+
