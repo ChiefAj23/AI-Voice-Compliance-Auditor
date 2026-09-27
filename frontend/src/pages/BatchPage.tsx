@@ -1,7 +1,11 @@
-import { useState, useCallback } from 'react';
+import { useState } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { Upload, FileAudio, Loader2, CheckCircle2, XCircle, Trash2 } from 'lucide-react';
+import clsx from 'clsx';
+import { FileAudio, UploadCloud, X } from 'lucide-react';
 import { apiService } from '../services/api';
+import { formatPercent, formatScore, humanize } from '../utils/format';
+import { complianceLabel, complianceTone, sentimentLabel, sentimentTone } from '../utils/status';
+import { Badge, Card, CardBody, CardFooter, CardHeader, IconButton, PageHeader, Spinner, useToast } from '../components/ui';
 
 interface BatchResult {
   filename: string;
@@ -9,11 +13,14 @@ interface BatchResult {
   error?: string;
 }
 
+const toMegabytes = (bytes: number) => (bytes / 1024 / 1024).toFixed(2);
+const pluralFiles = (count: number) => `${count} ${count === 1 ? 'file' : 'files'}`;
+
 export default function BatchPage() {
   const [files, setFiles] = useState<File[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [results, setResults] = useState<BatchResult[]>([]);
-  const [progress, setProgress] = useState(0);
+  const toast = useToast();
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     accept: {
@@ -21,6 +28,9 @@ export default function BatchPage() {
     },
     onDrop: (acceptedFiles) => {
       setFiles((prev) => [...prev, ...acceptedFiles]);
+    },
+    onDropRejected: (rejections) => {
+      toast.warning(`${pluralFiles(rejections.length)} skipped`, 'Only WAV, MP3 and M4A files can be added.');
     },
     multiple: true,
   });
@@ -33,34 +43,43 @@ export default function BatchPage() {
     if (files.length === 0) return;
 
     setIsProcessing(true);
-    setProgress(0);
     setResults([]);
 
     try {
       const result = await apiService.batchAnalyze(files);
 
       // Map results
-      const mappedResults: BatchResult[] = files.map((file, index) => {
+      const mappedResults: BatchResult[] = files.map((file) => {
         const fileResult = result.results?.find((r: any) => r.filename === file.name);
         const error = result.errors?.find((e: any) => e.filename === file.name);
 
         return {
           filename: file.name,
           analysis: fileResult?.analysis,
-          error: error?.error || fileResult ? undefined : 'Processing failed',
+          error: error?.error || (fileResult ? undefined : 'Processing failed'),
         };
       });
 
       setResults(mappedResults);
-      setProgress(100);
+
+      const succeededCount = mappedResults.filter((r) => r.analysis && !r.error).length;
+      const failedCount = mappedResults.filter((r) => r.error).length;
+      if (failedCount > 0) {
+        toast.warning('Batch finished with errors', `${succeededCount} analyzed, ${failedCount} failed.`);
+      } else {
+        toast.success('Batch complete', `${pluralFiles(succeededCount)} analyzed.`);
+      }
     } catch (error: any) {
       console.error('Batch processing error:', error);
+      const detail = error.response?.data?.detail;
+      const message: string = (typeof detail === 'string' && detail) || error.message || 'Processing failed';
       setResults(
         files.map((file) => ({
           filename: file.name,
-          error: error.response?.data?.detail || error.message || 'Processing failed',
+          error: message,
         }))
       );
+      toast.error('Batch failed', message);
     } finally {
       setIsProcessing(false);
     }
@@ -69,200 +88,203 @@ export default function BatchPage() {
   const clearAll = () => {
     setFiles([]);
     setResults([]);
-    setProgress(0);
   };
 
   const successful = results.filter((r) => r.analysis && !r.error).length;
   const failed = results.filter((r) => r.error).length;
+  const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
 
   return (
-    <div className="max-w-6xl mx-auto">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">📦 Batch Processing</h1>
-        <p className="text-gray-600 dark:text-gray-400">
-          Upload and analyze multiple audio files at once for efficient bulk processing.
-        </p>
-      </div>
+    <div>
+      <PageHeader
+        title="Batch processing"
+        description="Analyze many recordings in one run and review the results together."
+      />
 
-      {/* Upload Area */}
-      <div className="card mb-6">
-        <h2 className="text-xl font-semibold mb-4 dark:text-white">Upload Multiple Files</h2>
-
-        <div
-          {...getRootProps()}
-          className={`
-            border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors mb-4
-            ${isDragActive
-              ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
-              : 'border-gray-300 dark:border-gray-600 hover:border-primary-400 dark:hover:border-primary-500'
-            }
-          `}
-        >
-          <input {...getInputProps()} />
-          <Upload className="mx-auto h-12 w-12 text-gray-400 dark:text-gray-500 mb-4" />
-          {isDragActive ? (
-            <p className="text-primary-600 dark:text-primary-400">Drop the audio files here...</p>
-          ) : (
-            <>
-              <p className="text-gray-600 dark:text-gray-400 mb-2">
-                Drag and drop multiple audio files here, or click to select
-              </p>
-              <p className="text-sm text-gray-500 dark:text-gray-500">Supports WAV, MP3, M4A</p>
-            </>
-          )}
-        </div>
-
-        {/* File List */}
-        {files.length > 0 && (
-          <div className="space-y-2">
-            <div className="flex justify-between items-center mb-2">
-              <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                {files.length} file(s) selected
-              </p>
-              <button
-                onClick={clearAll}
-                className="text-sm text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300"
+      <div className="space-y-6">
+        <Card>
+          <CardHeader
+            title="Upload recordings"
+            description="Add up to 50 files per batch. Each one is transcribed, scored and saved to history."
+          />
+          <CardBody className="space-y-4">
+            <div
+              {...getRootProps({
+                className: clsx(
+                  'flex cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed px-6 py-10 text-center outline-none transition-colors duration-150',
+                  'focus-visible:border-accent focus-visible:ring-[3px] focus-visible:ring-accent/15',
+                  isDragActive
+                    ? 'border-accent bg-accent-subtle/40'
+                    : 'border-line-strong bg-surface-subtle/40 hover:border-accent hover:bg-accent-subtle/40',
+                ),
+              })}
+            >
+              <input {...getInputProps()} />
+              <span
+                className={clsx(
+                  'grid h-10 w-10 place-items-center rounded-lg border border-line bg-surface shadow-xs',
+                  isDragActive ? 'text-accent-fg' : 'text-fg-subtle',
+                )}
               >
-                Clear All
-              </button>
-            </div>
-            {files.map((file, index) => (
-              <div
-                key={index}
-                className="p-3 bg-gray-50 dark:bg-gray-700 rounded-lg flex items-center justify-between"
-              >
-                <div className="flex items-center flex-1">
-                  <FileAudio className="h-5 w-5 text-gray-600 dark:text-gray-400 mr-3" />
-                  <div className="flex-1">
-                    <p className="font-medium text-gray-900 dark:text-white">{file.name}</p>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">
-                      {(file.size / 1024 / 1024).toFixed(2)} MB
-                    </p>
-                  </div>
-                </div>
-                <button
-                  onClick={() => removeFile(index)}
-                  className="text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300"
-                >
-                  <Trash2 className="h-5 w-5" />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Process Button */}
-        {files.length > 0 && !isProcessing && (
-          <button
-            onClick={handleProcess}
-            className="btn btn-primary w-full mt-4"
-          >
-            <Upload className="mr-2 h-5 w-5" />
-            Process All Files ({files.length})
-          </button>
-        )}
-
-        {/* Progress */}
-        {isProcessing && (
-          <div className="mt-4">
-            <div className="flex justify-between mb-2">
-              <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                Processing...
+                <UploadCloud className="h-5 w-5" aria-hidden="true" />
               </span>
-              <span className="text-sm text-gray-600 dark:text-gray-400">{progress}%</span>
+              <p className="mt-4 text-sm font-medium text-fg">
+                {isDragActive ? (
+                  'Release to add the files'
+                ) : (
+                  <>
+                    Drop audio files or <span className="text-accent-fg">browse</span>
+                  </>
+                )}
+              </p>
+              <p className="mt-1 text-xs text-fg-subtle">WAV, MP3 or M4A</p>
             </div>
-            <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
-              <div
-                className="bg-primary-600 h-2 rounded-full transition-all duration-300"
-                style={{ width: `${progress}%` }}
-              />
+
+            {files.length > 0 && (
+              <div className="overflow-hidden rounded-lg border border-line">
+                <div className="flex items-center justify-between gap-3 border-b border-line bg-surface-subtle px-4 py-1.5">
+                  <p className="text-xs font-medium text-fg-subtle">
+                    <span className="tabular-nums">{pluralFiles(files.length)}</span> selected
+                    <span className="mx-1.5 text-fg-faint" aria-hidden="true">·</span>
+                    <span className="tabular-nums">{toMegabytes(totalBytes)} MB</span>
+                  </p>
+                  <button type="button" onClick={clearAll} className="btn btn-ghost btn-sm -mr-2">
+                    Clear all
+                  </button>
+                </div>
+                <ul className="max-h-80 divide-y divide-line overflow-y-auto">
+                  {files.map((file, index) => (
+                    <li key={`${file.name}-${index}`} className="flex items-center gap-3 px-4 py-2.5">
+                      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-surface-subtle text-fg-subtle">
+                        <FileAudio className="h-4 w-4" aria-hidden="true" />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium text-fg" title={file.name}>
+                          {file.name}
+                        </p>
+                        <p className="text-xs tabular-nums text-fg-subtle">{toMegabytes(file.size)} MB</p>
+                      </div>
+                      <IconButton icon={X} label={`Remove ${file.name}`} onClick={() => removeFile(index)} />
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </CardBody>
+
+          {files.length > 0 && (
+            <CardFooter className="flex-col items-stretch sm:flex-row sm:items-center">
+              <p role="status" className="text-[13px] text-fg-subtle">
+                {isProcessing
+                  ? 'Transcribing and scoring. Large batches can take several minutes.'
+                  : 'Successful analyses are saved to history.'}
+              </p>
+              <button type="button" onClick={handleProcess} disabled={isProcessing} className="btn btn-primary">
+                {isProcessing && <Spinner />}
+                {isProcessing ? `Analyzing ${pluralFiles(files.length)}…` : `Analyze ${pluralFiles(files.length)}`}
+              </button>
+            </CardFooter>
+          )}
+        </Card>
+
+        {results.length > 0 && (
+          <Card className="overflow-hidden">
+            <CardHeader
+              title="Results"
+              description={`${pluralFiles(results.length)} processed in this batch.`}
+              actions={
+                <>
+                  <Badge tone={successful > 0 ? 'success' : 'neutral'} dot>
+                    <span className="tabular-nums">{successful}</span> succeeded
+                  </Badge>
+                  <Badge tone={failed > 0 ? 'danger' : 'neutral'} dot>
+                    <span className="tabular-nums">{failed}</span> failed
+                  </Badge>
+                </>
+              }
+            />
+            <div className="overflow-x-auto">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>File</th>
+                    <th>Status</th>
+                    <th>Compliance</th>
+                    <th>Sentiment</th>
+                    <th>Emotion</th>
+                    <th className="text-right">Toxicity</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {results.map((result, index) => {
+                    const score = result.analysis?.compliance_score;
+                    const sentiment = result.analysis?.sentiment;
+                    const emotion = result.analysis?.emotion;
+                    return (
+                      <tr key={`${result.filename}-${index}`}>
+                        <td>
+                          <div className="flex items-center gap-3">
+                            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-surface-subtle text-fg-subtle">
+                              <FileAudio className="h-4 w-4" aria-hidden="true" />
+                            </span>
+                            <p className="max-w-[18rem] truncate font-medium text-fg" title={result.filename}>
+                              {result.filename}
+                            </p>
+                          </div>
+                        </td>
+                        <td>
+                          {result.error ? (
+                            <Badge tone="danger" dot>
+                              Failed
+                            </Badge>
+                          ) : result.analysis ? (
+                            <Badge tone="success" dot>
+                              Analyzed
+                            </Badge>
+                          ) : (
+                            <Badge tone="neutral" dot>
+                              No result
+                            </Badge>
+                          )}
+                        </td>
+                        {result.error ? (
+                          <td colSpan={4} className="min-w-[16rem] text-[13px] text-fg-muted">
+                            {result.error}
+                          </td>
+                        ) : (
+                          <>
+                            <td>
+                              <div className="flex items-center gap-2.5">
+                                <span className="w-9 font-medium tabular-nums">{formatScore(score)}</span>
+                                <Badge tone={complianceTone(score)} dot>
+                                  {complianceLabel(score)}
+                                </Badge>
+                              </div>
+                            </td>
+                            <td>
+                              {sentiment ? (
+                                <Badge tone={sentimentTone(sentiment)}>{sentimentLabel(sentiment)}</Badge>
+                              ) : (
+                                <span className="text-fg-faint">—</span>
+                              )}
+                            </td>
+                            <td className="text-fg-muted">
+                              {emotion ? humanize(emotion) : <span className="text-fg-faint">—</span>}
+                            </td>
+                            <td className="text-right tabular-nums text-fg-muted">
+                              {formatPercent(result.analysis?.toxicity_score)}
+                            </td>
+                          </>
+                        )}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
-          </div>
+          </Card>
         )}
       </div>
-
-      {/* Results Summary */}
-      {results.length > 0 && (
-        <div className="card mb-6">
-          <h2 className="text-xl font-semibold mb-4 dark:text-white">Processing Summary</h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4">
-              <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Total Files</p>
-              <p className="text-2xl font-bold text-gray-900 dark:text-white">{results.length}</p>
-            </div>
-            <div className="bg-green-50 dark:bg-green-900/20 rounded-lg p-4">
-              <p className="text-sm text-green-600 dark:text-green-400 mb-1">Successful</p>
-              <p className="text-2xl font-bold text-green-700 dark:text-green-300">{successful}</p>
-            </div>
-            <div className="bg-red-50 dark:bg-red-900/20 rounded-lg p-4">
-              <p className="text-sm text-red-600 dark:text-red-400 mb-1">Failed</p>
-              <p className="text-2xl font-bold text-red-700 dark:text-red-300">{failed}</p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Results Detail */}
-      {results.length > 0 && (
-        <div className="card">
-          <h2 className="text-xl font-semibold mb-4 dark:text-white">Detailed Results</h2>
-          <div className="space-y-4">
-            {results.map((result, index) => (
-              <div
-                key={index}
-                className={`p-4 rounded-lg border ${
-                  result.error
-                    ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
-                    : 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
-                }`}
-              >
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <div className="flex items-center mb-2">
-                      {result.error ? (
-                        <XCircle className="h-5 w-5 text-red-600 dark:text-red-400 mr-2" />
-                      ) : (
-                        <CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-400 mr-2" />
-                      )}
-                      <p className="font-medium text-gray-900 dark:text-white">{result.filename}</p>
-                    </div>
-                    {result.error ? (
-                      <p className="text-sm text-red-600 dark:text-red-400">{result.error}</p>
-                    ) : result.analysis ? (
-                      <div className="mt-2 grid grid-cols-2 md:grid-cols-4 gap-2">
-                        <div>
-                          <p className="text-xs text-gray-600 dark:text-gray-400">Compliance</p>
-                          <p className="font-semibold text-gray-900 dark:text-white">
-                            {result.analysis.compliance_score?.toFixed(2) || 'N/A'}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-gray-600 dark:text-gray-400">Sentiment</p>
-                          <p className="font-semibold text-gray-900 dark:text-white">
-                            {result.analysis.sentiment || 'N/A'}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-gray-600 dark:text-gray-400">Emotion</p>
-                          <p className="font-semibold text-gray-900 dark:text-white">
-                            {result.analysis.emotion || 'N/A'}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-gray-600 dark:text-gray-400">Toxicity</p>
-                          <p className="font-semibold text-gray-900 dark:text-white">
-                            {((result.analysis.toxicity_score || 0) * 100).toFixed(1)}%
-                          </p>
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

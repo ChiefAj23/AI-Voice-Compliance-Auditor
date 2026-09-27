@@ -442,17 +442,37 @@ Use the interactive API documentation at `http://127.0.0.1:8000/docs` to test en
 
 ## 📸 Screenshots
 
-### Login Page
-Beautiful split-screen login page with feature highlights.
+Captured from a local run on ten synthetic support calls (scripted and voiced with text-to-speech), so every name and number in them is made up.
 
-### Dashboard
-Modern dashboard with comprehensive analysis results, charts, and metrics.
+### Sign in
+Split-screen sign-in with the product's highlights.
 
-### Analysis Results
-Detailed view showing transcription, sentiment timeline, speaker analysis, and more.
+![Sign-in page: the form on the left, three product highlights on the right](docs/screenshots/sign-in.jpg)
 
-### Compliance Rules
-Custom rule builder with testing and management interface.
+### New analysis
+Upload a recording or record one in the browser. The verdict, compliance score and signals appear below the upload card.
+
+![New analysis page with a billing call uploaded, and its result: a critical finding on a call that scored 99.9](docs/screenshots/new-analysis.jpg)
+
+### Findings and transcript
+Each rule match shows the words that triggered it. The transcript follows playback, and clicking a line jumps to that moment.
+
+![Findings for guarantee language and a missing recording disclosure, above the transcript and its audio player](docs/screenshots/findings-and-transcript.jpg)
+
+### History
+Every analyzed call, with search, score and date filters, and CSV export.
+
+![History table of ten analyzed calls with their compliance scores and sentiment](docs/screenshots/history.jpg)
+
+### Statistics
+Volume, average compliance, the daily score trend against the review threshold, and sentiment across calls.
+
+![Statistics page with summary tiles, the compliance trend chart and the sentiment breakdown](docs/screenshots/statistics.jpg)
+
+### Compliance rules
+Regex, keyword, threshold and custom rules, each with a severity and priority, that can be switched on and off.
+
+![Compliance rules table with four active rules](docs/screenshots/compliance-rules.jpg)
 
 ---
 

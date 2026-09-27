@@ -178,6 +178,9 @@ export interface HistoryRecord {
   transcription: string;
   created_at: string;
   analysis: any;
+  /** Seconds of audio, when the backend recorded it. */
+  file_duration?: number | null;
+  audio_format?: string | null;
 }
 
 export const apiService = {

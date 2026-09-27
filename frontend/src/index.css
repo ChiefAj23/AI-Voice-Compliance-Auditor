@@ -2,38 +2,261 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Design tokens. Tailwind's semantic colors (canvas, surface, line, fg, accent)
+ * read these variables, so switching theme is a variable swap.
+ */
 @layer base {
+  :root {
+    color-scheme: light;
+    --canvas: 247 248 250;
+    --surface: 255 255 255;
+    --surface-subtle: 244 245 247;
+    --surface-muted: 234 236 240;
+    --line: 228 231 236;
+    --line-strong: 208 213 221;
+    --fg: 16 24 40;
+    --fg-muted: 71 84 103;
+    --fg-subtle: 102 112 133;
+    --fg-faint: 152 162 179;
+    --accent: 62 99 221;
+    --accent-hover: 51 80 189;
+    --accent-subtle: 238 242 255;
+    --accent-fg: 51 80 189;
+  }
+
+  .dark {
+    color-scheme: dark;
+    --canvas: 10 13 20;
+    --surface: 17 21 31;
+    --surface-subtle: 24 29 41;
+    --surface-muted: 33 39 54;
+    --line: 36 43 58;
+    --line-strong: 52 61 80;
+    --fg: 236 239 244;
+    --fg-muted: 169 178 195;
+    --fg-subtle: 128 139 160;
+    --fg-faint: 94 104 124;
+    --accent: 74 107 230;
+    --accent-hover: 91 124 240;
+    --accent-subtle: 30 39 72;
+    --accent-fg: 159 181 251;
+  }
+
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
   body {
-    @apply bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100;
+    @apply bg-canvas font-sans text-sm text-fg;
+  }
+
+  ::selection {
+    @apply bg-accent/20;
+  }
+
+  input[type='checkbox'],
+  input[type='radio'] {
+    accent-color: rgb(var(--accent));
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    ::before,
+    ::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
   }
 }
 
 @layer components {
+  /* Buttons */
   .btn {
-    @apply px-4 py-2 rounded-lg font-medium transition-colors duration-200;
+    @apply inline-flex h-9 select-none items-center justify-center gap-2 whitespace-nowrap rounded-md px-3.5 text-sm font-medium
+      transition-colors duration-150
+      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas
+      disabled:cursor-not-allowed disabled:opacity-50;
   }
-
+  .btn > svg {
+    @apply h-4 w-4 shrink-0;
+  }
+  .btn-sm {
+    @apply h-8 gap-1.5 px-3 text-[13px];
+  }
+  .btn-lg {
+    @apply h-10 px-4;
+  }
+  .btn-icon {
+    @apply h-8 w-8 gap-0 px-0;
+  }
   .btn-primary {
-    @apply bg-primary-600 text-white hover:bg-primary-700 active:bg-primary-800;
+    @apply bg-accent text-white shadow-xs enabled:hover:bg-accent-hover;
   }
-
+  a.btn-primary {
+    @apply hover:bg-accent-hover;
+  }
   .btn-secondary {
-    @apply bg-gray-200 text-gray-800 hover:bg-gray-300 active:bg-gray-400;
+    @apply border border-line-strong bg-surface text-fg shadow-xs enabled:hover:bg-surface-subtle;
   }
-
+  a.btn-secondary {
+    @apply hover:bg-surface-subtle;
+  }
+  .btn-ghost {
+    @apply text-fg-muted enabled:hover:bg-surface-subtle enabled:hover:text-fg;
+  }
+  a.btn-ghost {
+    @apply hover:bg-surface-subtle hover:text-fg;
+  }
   .btn-danger {
-    @apply bg-red-600 text-white hover:bg-red-700 active:bg-red-800;
+    @apply bg-red-600 text-white shadow-xs enabled:hover:bg-red-700;
+  }
+  .btn-danger-ghost {
+    @apply text-fg-subtle enabled:hover:bg-red-50 enabled:hover:text-red-600 dark:enabled:hover:bg-red-500/10 dark:enabled:hover:text-red-400;
   }
 
+  /* Surfaces */
   .card {
-    @apply bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 transition-colors duration-200;
+    @apply rounded-lg border border-line bg-surface p-5 shadow-xs;
+  }
+  .card-flush {
+    @apply rounded-lg border border-line bg-surface shadow-xs;
+  }
+  .card-header {
+    @apply flex flex-wrap items-center justify-between gap-x-4 gap-y-3 border-b border-line px-5 py-4;
+  }
+  .card-title {
+    @apply text-sm font-semibold text-fg;
+  }
+  .card-description {
+    @apply mt-0.5 text-[13px] text-fg-subtle;
+  }
+  .card-body {
+    @apply p-5;
+  }
+  .card-footer {
+    @apply flex items-center justify-between gap-3 border-t border-line px-5 py-3;
   }
 
-  .input {
-    @apply w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white;
-  }
-
+  /* Forms */
   .label {
-    @apply block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2;
+    @apply mb-1.5 block text-sm font-medium text-fg;
+  }
+  .input {
+    @apply block w-full rounded-md border border-line-strong bg-surface px-3 py-[7px] text-sm text-fg shadow-xs
+      transition-[border-color,box-shadow] duration-150 placeholder:text-fg-faint
+      focus:border-accent focus:outline-none focus:ring-[3px] focus:ring-accent/15
+      disabled:cursor-not-allowed disabled:bg-surface-subtle disabled:text-fg-subtle;
+  }
+  select.input {
+    @apply appearance-none bg-no-repeat pr-9;
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none'%3e%3cpath d='M6 8l4 4 4-4' stroke='%2398a2b3' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3e%3c/svg%3e");
+    background-position: right 0.625rem center;
+    background-size: 1rem 1rem;
+  }
+  textarea.input {
+    @apply py-2 leading-6;
+  }
+  .help-text {
+    @apply mt-1.5 text-xs text-fg-subtle;
+  }
+  .field-error {
+    @apply mt-1.5 text-xs text-red-600 dark:text-red-400;
+  }
+
+  /* Status */
+  .badge {
+    @apply inline-flex items-center gap-1.5 whitespace-nowrap rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset;
+  }
+  .badge-neutral {
+    @apply bg-surface-subtle text-fg-muted ring-line-strong/60;
+  }
+  .badge-accent {
+    @apply bg-accent-subtle text-accent-fg ring-accent/20;
+  }
+  .badge-success {
+    @apply bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-500/20;
+  }
+  .badge-warning {
+    @apply bg-amber-50 text-amber-700 ring-amber-600/20 dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-500/20;
+  }
+  .badge-danger {
+    @apply bg-red-50 text-red-700 ring-red-600/20 dark:bg-red-500/10 dark:text-red-400 dark:ring-red-500/20;
+  }
+  .badge-info {
+    @apply bg-sky-50 text-sky-700 ring-sky-600/20 dark:bg-sky-500/10 dark:text-sky-400 dark:ring-sky-500/20;
+  }
+  .status-dot {
+    @apply inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-current;
+  }
+
+  .callout {
+    @apply flex gap-3 rounded-lg border px-4 py-3 text-sm;
+  }
+  .callout > svg {
+    @apply mt-0.5 h-4 w-4 shrink-0;
+  }
+  .callout-info {
+    @apply border-accent/20 bg-accent-subtle text-accent-fg;
+  }
+  .callout-success {
+    @apply border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-500/25 dark:bg-emerald-500/10 dark:text-emerald-300;
+  }
+  .callout-warning {
+    @apply border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-300;
+  }
+  .callout-danger {
+    @apply border-red-200 bg-red-50 text-red-800 dark:border-red-500/25 dark:bg-red-500/10 dark:text-red-300;
+  }
+
+  /* Data */
+  .data-table {
+    @apply w-full text-left text-sm;
+  }
+  .data-table th {
+    @apply whitespace-nowrap border-b border-line bg-surface-subtle px-4 py-2.5 text-xs font-medium text-fg-subtle;
+  }
+  .data-table td {
+    @apply border-b border-line px-4 py-3 align-middle text-fg;
+  }
+  .data-table tbody tr:last-child td {
+    @apply border-b-0;
+  }
+  .data-table-hover tbody tr {
+    @apply transition-colors duration-100;
+  }
+  .data-table-hover tbody tr:hover {
+    @apply bg-surface-subtle/70;
+  }
+  .kpi-label {
+    @apply text-[13px] font-medium text-fg-subtle;
+  }
+  .kpi-value {
+    @apply text-2xl font-semibold tracking-tight text-fg;
+  }
+
+  /* Text */
+  .page-title {
+    @apply text-xl font-semibold tracking-tight text-fg;
+  }
+  .page-description {
+    @apply mt-1 text-sm text-fg-subtle;
+  }
+  .section-title {
+    @apply text-sm font-semibold text-fg;
+  }
+  .eyebrow {
+    @apply text-2xs font-semibold uppercase tracking-wider text-fg-faint;
+  }
+  .link {
+    @apply font-medium text-accent-fg underline-offset-2 hover:underline;
+  }
+  .code-chip {
+    @apply rounded bg-surface-subtle px-1.5 py-0.5 font-mono text-xs text-fg ring-1 ring-inset ring-line;
+  }
+  .skeleton {
+    @apply animate-pulse rounded-md bg-surface-muted;
   }
 }

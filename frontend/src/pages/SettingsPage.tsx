@@ -1,7 +1,23 @@
 import { useState } from 'react';
-import { Settings, Save, AlertCircle, Trash2, Database } from 'lucide-react';
+import type { ReactNode } from 'react';
+import { Check, Save, Trash2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { usersApi } from '../services/api';
+import Logo from '../components/Logo';
+import {
+  Badge,
+  Card,
+  CardBody,
+  CardFooter,
+  CardHeader,
+  Field,
+  PageHeader,
+  Spinner,
+  Switch,
+  useConfirm,
+  useToast,
+} from '../components/ui';
+import { errorDetail } from '../utils/errors';
 
 interface ThresholdSettings {
   compliance_critical: number;
@@ -12,8 +28,125 @@ interface ThresholdSettings {
   keyword_count_critical: number;
 }
 
+interface ThresholdField {
+  key: keyof ThresholdSettings;
+  label: string;
+  help: string;
+  min: string;
+  max?: string;
+  step?: string;
+}
+
+const THRESHOLD_GROUPS: { title: string; description: string; fields: ThresholdField[] }[] = [
+  {
+    title: 'Compliance score',
+    description: 'Scores run from 0 to 100. Alerts fire when a score drops below a threshold.',
+    fields: [
+      {
+        key: 'compliance_warning',
+        label: 'Warning below',
+        help: 'Raise a warning when the score drops below this value.',
+        min: '0',
+        max: '100',
+      },
+      {
+        key: 'compliance_critical',
+        label: 'Critical below',
+        help: 'Raise a critical alert when the score drops below this value.',
+        min: '0',
+        max: '100',
+      },
+    ],
+  },
+  {
+    title: 'Toxicity',
+    description: 'A probability from 0.0 to 1.0. Alerts fire when toxicity rises above a threshold.',
+    fields: [
+      {
+        key: 'toxicity_warning',
+        label: 'Warning above',
+        help: 'Raise a warning when toxicity exceeds this value.',
+        min: '0',
+        max: '1',
+        step: '0.1',
+      },
+      {
+        key: 'toxicity_critical',
+        label: 'Critical above',
+        help: 'Raise a critical alert when toxicity exceeds this value.',
+        min: '0',
+        max: '1',
+        step: '0.1',
+      },
+    ],
+  },
+  {
+    title: 'Keyword detection',
+    description: 'Problematic keywords detected in a single call.',
+    fields: [
+      {
+        key: 'keyword_count_warning',
+        label: 'Warning count',
+        help: 'Raise a warning when this many problematic keywords are detected.',
+        min: '0',
+      },
+      {
+        key: 'keyword_count_critical',
+        label: 'Critical count',
+        help: 'Raise a critical alert when this many problematic keywords are detected.',
+        min: '0',
+      },
+    ],
+  },
+];
+
+type ResetOption = 'reset_analyses' | 'reset_rules' | 'reset_schedules' | 'reset_users';
+
+// Descriptions mirror what POST /api/admin/reset-database drops for each option.
+// `deletes` feeds the confirm dialog; the full reset has its own wording there.
+const RESET_OPTIONS: { key: ResetOption; label: string; description: string; deletes?: string }[] = [
+  {
+    key: 'reset_analyses',
+    label: 'Analysis records',
+    description: 'Every analyzed call, with its comments and tag assignments.',
+    deletes: 'All analysis records, including their comments and tag assignments',
+  },
+  {
+    key: 'reset_rules',
+    label: 'Compliance rules',
+    description: 'Every compliance rule used to score calls.',
+    deletes: 'All compliance rules',
+  },
+  {
+    key: 'reset_schedules',
+    label: 'Scheduled reports and webhooks',
+    description: 'Scheduled reports, webhooks and notification configurations.',
+    deletes: 'All scheduled reports, webhooks and notification configurations',
+  },
+  {
+    key: 'reset_users',
+    label: 'All users',
+    description: 'Drops every table, users and teams included, then recreates the default roles and admin account.',
+  },
+];
+
+/** Two-column settings row on large screens: heading and description left, content right. */
+function SettingsSection({ title, description, children }: { title: ReactNode; description: ReactNode; children: ReactNode }) {
+  return (
+    <section className="grid gap-x-8 gap-y-4 py-8 first:pt-0 last:pb-0 lg:grid-cols-3">
+      <div>
+        <h2 className="section-title">{title}</h2>
+        <p className="mt-1 text-[13px] leading-5 text-fg-subtle">{description}</p>
+      </div>
+      <div className="min-w-0 lg:col-span-2">{children}</div>
+    </section>
+  );
+}
+
 export default function SettingsPage() {
   const { user: currentUser } = useAuth();
+  const toast = useToast();
+  const confirm = useConfirm();
   const [settings, setSettings] = useState<ThresholdSettings>({
     compliance_critical: 50,
     compliance_warning: 70,
@@ -31,7 +164,7 @@ export default function SettingsPage() {
     reset_rules: false,
     reset_schedules: false,
   });
-  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [confirmInput, setConfirmInput] = useState('');
 
   const handleSave = () => {
     // In a real app, this would save to backend
@@ -44,16 +177,39 @@ export default function SettingsPage() {
     setSettings({ ...settings, [key]: value });
   };
 
+  const confirmText = resetOptions.reset_users ? 'DELETE ALL USERS' : 'RESET DATABASE';
+  const nothingSelected =
+    !resetOptions.reset_analyses && !resetOptions.reset_users && !resetOptions.reset_rules && !resetOptions.reset_schedules;
+  const selectedCount = RESET_OPTIONS.filter((option) => resetOptions[option.key]).length;
+
   const handleResetDatabase = async () => {
-    if (!confirm('⚠️ WARNING: This will permanently delete data from the database!\n\nAre you absolutely sure you want to proceed?')) {
+    if (confirmInput !== confirmText) {
+      toast.error('Confirmation text does not match', 'Reset cancelled.');
       return;
     }
 
-    const confirmText = resetOptions.reset_users ? 'DELETE ALL USERS' : 'RESET DATABASE';
-    if (prompt(`Type "${confirmText}" to confirm:`) !== confirmText) {
-      alert('Confirmation text does not match. Reset cancelled.');
-      return;
-    }
+    const confirmed = await confirm({
+      title: resetOptions.reset_users ? 'Reset the entire database?' : 'Reset the selected data?',
+      description: resetOptions.reset_users ? (
+        <p>
+          Every table is dropped, including all users, teams, analyses, compliance rules, scheduled reports and
+          webhooks. Only the default roles and admin account are recreated. This can't be undone.
+        </p>
+      ) : (
+        <>
+          <p>This permanently deletes:</p>
+          <ul className="mt-1.5 list-disc space-y-1 pl-5">
+            {RESET_OPTIONS.filter((option) => option.key !== 'reset_users' && resetOptions[option.key]).map((option) => (
+              <li key={option.key}>{option.deletes}</li>
+            ))}
+          </ul>
+          <p className="mt-2">This can't be undone.</p>
+        </>
+      ),
+      confirmLabel: resetOptions.reset_users ? 'Reset everything' : 'Reset data',
+      tone: 'danger',
+    });
+    if (!confirmed) return;
 
     setResetLoading(true);
     try {
@@ -61,276 +217,143 @@ export default function SettingsPage() {
         confirm: true,
         ...resetOptions,
       });
-      alert('Database reset successfully! The page will reload.');
-      window.location.reload();
-    } catch (error: any) {
-      alert(error.response?.data?.detail || 'Failed to reset database');
-    } finally {
+      toast.success('Database reset', 'Reloading the app…');
+      // Leave the toast on screen briefly; the reload replaces the old blocking alert.
+      window.setTimeout(() => window.location.reload(), 1200);
+    } catch (error) {
+      toast.error('Could not reset the database', errorDetail(error));
       setResetLoading(false);
-      setShowResetConfirm(false);
     }
   };
 
   const isAdmin = currentUser && (currentUser.is_superuser || currentUser.roles.includes('admin'));
 
   return (
-    <div className="max-w-4xl mx-auto">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">⚙️ Settings</h1>
-        <p className="text-gray-600 dark:text-gray-400">
-          Configure alert thresholds and compliance rules.
-        </p>
-      </div>
+    <div>
+      <PageHeader title="Settings" description="Configure when analyses raise alerts." />
 
-      {/* Alert Thresholds */}
-      <div className="card mb-6">
-        <div className="flex items-center mb-4">
-          <AlertCircle className="h-5 w-5 text-gray-600 dark:text-gray-400 mr-2" />
-          <h2 className="text-xl font-semibold dark:text-white">Alert Thresholds</h2>
-        </div>
-
-        <div className="space-y-6">
-          {/* Compliance Thresholds */}
-          <div>
-            <h3 className="text-lg font-semibold mb-4 dark:text-white">Compliance Score Thresholds</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="label dark:text-gray-300">
-                  Critical Alert (Below)
-                </label>
-                <input
-                  type="number"
-                  value={settings.compliance_critical}
-                  onChange={(e) => updateSetting('compliance_critical', Number(e.target.value))}
-                  className="input"
-                  min="0"
-                  max="100"
-                />
-                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                  Alerts will be triggered when compliance score drops below this value
-                </p>
-              </div>
-              <div>
-                <label className="label dark:text-gray-300">
-                  Warning Alert (Below)
-                </label>
-                <input
-                  type="number"
-                  value={settings.compliance_warning}
-                  onChange={(e) => updateSetting('compliance_warning', Number(e.target.value))}
-                  className="input"
-                  min="0"
-                  max="100"
-                />
-                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                  Warnings will be triggered when compliance score drops below this value
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* Toxicity Thresholds */}
-          <div>
-            <h3 className="text-lg font-semibold mb-4 dark:text-white">Toxicity Score Thresholds</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="label dark:text-gray-300">
-                  Critical Alert (Above)
-                </label>
-                <input
-                  type="number"
-                  step="0.1"
-                  value={settings.toxicity_critical}
-                  onChange={(e) => updateSetting('toxicity_critical', Number(e.target.value))}
-                  className="input"
-                  min="0"
-                  max="1"
-                />
-                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                  Critical alerts when toxicity exceeds this value (0.0 - 1.0)
-                </p>
-              </div>
-              <div>
-                <label className="label dark:text-gray-300">
-                  Warning Alert (Above)
-                </label>
-                <input
-                  type="number"
-                  step="0.1"
-                  value={settings.toxicity_warning}
-                  onChange={(e) => updateSetting('toxicity_warning', Number(e.target.value))}
-                  className="input"
-                  min="0"
-                  max="1"
-                />
-                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                  Warnings when toxicity exceeds this value (0.0 - 1.0)
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* Keyword Thresholds */}
-          <div>
-            <h3 className="text-lg font-semibold mb-4 dark:text-white">Keyword Detection Thresholds</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="label dark:text-gray-300">
-                  Warning (Count)
-                </label>
-                <input
-                  type="number"
-                  value={settings.keyword_count_warning}
-                  onChange={(e) => updateSetting('keyword_count_warning', Number(e.target.value))}
-                  className="input"
-                  min="0"
-                />
-                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                  Warning when this many problematic keywords are detected
-                </p>
-              </div>
-              <div>
-                <label className="label dark:text-gray-300">
-                  Critical (Count)
-                </label>
-                <input
-                  type="number"
-                  value={settings.keyword_count_critical}
-                  onChange={(e) => updateSetting('keyword_count_critical', Number(e.target.value))}
-                  className="input"
-                  min="0"
-                />
-                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                  Critical alert when this many problematic keywords are detected
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-6 flex justify-end">
-          <button
-            onClick={handleSave}
-            className="btn btn-primary flex items-center"
-          >
-            <Save className="mr-2 h-5 w-5" />
-            {saved ? 'Saved!' : 'Save Settings'}
-          </button>
-        </div>
-      </div>
-
-      {/* Info Section */}
-      <div className="card bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
-        <div className="flex items-start">
-          <AlertCircle className="h-5 w-5 text-blue-600 dark:text-blue-400 mr-3 mt-0.5" />
-          <div>
-            <h3 className="font-semibold text-blue-900 dark:text-blue-300 mb-2">
-              About Alert Thresholds
-            </h3>
-            <p className="text-sm text-blue-800 dark:text-blue-400">
-              These settings control when alerts and warnings are triggered during audio analysis.
-              Critical alerts require immediate attention, while warnings indicate areas that may need review.
-              Adjust these values based on your organization's compliance requirements.
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* Database Reset - Admin Only */}
-      {isAdmin && (
-        <div className="card mb-6 border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20">
-          <div className="flex items-center mb-4">
-            <Database className="h-5 w-5 text-red-600 dark:text-red-400 mr-2" />
-            <h2 className="text-xl font-semibold dark:text-white text-red-900 dark:text-red-300">
-              Database Management
-            </h2>
-          </div>
-
-          <div className="space-y-4">
-            <div className="bg-red-100 dark:bg-red-900/40 border border-red-300 dark:border-red-700 rounded-lg p-4">
-              <div className="flex items-start">
-                <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400 mr-3 mt-0.5 flex-shrink-0" />
-                <div>
-                  <h3 className="font-semibold text-red-900 dark:text-red-300 mb-2">
-                    ⚠️ Dangerous Operation
-                  </h3>
-                  <p className="text-sm text-red-800 dark:text-red-400 mb-2">
-                    Resetting the database will permanently delete selected data. This action cannot be undone.
-                    Make sure you have backups before proceeding.
-                  </p>
-                  <p className="text-sm font-medium text-red-900 dark:text-red-300">
-                    You are logged in as an administrator.
-                  </p>
+      <div className="divide-y divide-line">
+        <SettingsSection
+          title="Alert thresholds"
+          description="Decide when an analysis raises an alert. Critical alerts need immediate attention; warnings flag calls that may need review."
+        >
+          <Card>
+            <div className="divide-y divide-line">
+              {THRESHOLD_GROUPS.map((group) => (
+                <div key={group.title} className="p-5">
+                  <h3 className="section-title">{group.title}</h3>
+                  <p className="mt-0.5 text-[13px] text-fg-subtle">{group.description}</p>
+                  <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                    {group.fields.map((field) => (
+                      <Field key={field.key} label={field.label} htmlFor={`threshold-${field.key}`} help={field.help}>
+                        <input
+                          id={`threshold-${field.key}`}
+                          type="number"
+                          value={settings[field.key]}
+                          onChange={(e) => updateSetting(field.key, Number(e.target.value))}
+                          className="input"
+                          min={field.min}
+                          max={field.max}
+                          step={field.step}
+                        />
+                      </Field>
+                    ))}
+                  </div>
                 </div>
+              ))}
+            </div>
+            <CardFooter>
+              <p className="text-[13px] text-fg-subtle">Saved in this browser only.</p>
+              <button type="button" onClick={handleSave} className="btn btn-primary">
+                {saved ? <Check /> : <Save />}
+                {saved ? 'Saved' : 'Save changes'}
+              </button>
+            </CardFooter>
+          </Card>
+        </SettingsSection>
+
+        {/* Database reset - admin only */}
+        {isAdmin && (
+          <SettingsSection
+            title="Data management"
+            description="Administrator tools for the audit database. Only administrators see this section."
+          >
+            <Card>
+              <CardHeader
+                title={<span className="text-red-600 dark:text-red-400">Danger zone</span>}
+                description="Resetting permanently deletes the selected data and can't be undone. Make sure you have a backup first."
+              />
+              <CardBody className="space-y-5">
+                <div className="divide-y divide-line rounded-lg border border-line">
+                  {RESET_OPTIONS.map((option) => (
+                    <div key={option.key} className="flex items-start justify-between gap-4 px-4 py-3">
+                      <Switch
+                        checked={resetOptions[option.key]}
+                        onChange={(checked) => setResetOptions({ ...resetOptions, [option.key]: checked })}
+                        label={option.label}
+                        description={option.description}
+                        disabled={resetLoading}
+                      />
+                      {option.key === 'reset_users' && <Badge tone="danger">Full reset</Badge>}
+                    </div>
+                  ))}
+                </div>
+
+                <Field
+                  label={
+                    <>
+                      Type <span className="code-chip">{confirmText}</span> to confirm
+                    </>
+                  }
+                  htmlFor="reset-confirmation"
+                >
+                  <input
+                    id="reset-confirmation"
+                    type="text"
+                    value={confirmInput}
+                    onChange={(e) => setConfirmInput(e.target.value)}
+                    autoComplete="off"
+                    spellCheck={false}
+                    disabled={resetLoading}
+                    className="input font-mono text-[13px]"
+                  />
+                </Field>
+              </CardBody>
+              <CardFooter>
+                <p className="text-[13px] text-fg-subtle">
+                  {nothingSelected
+                    ? 'Select at least one data set to reset.'
+                    : resetOptions.reset_users
+                      ? 'Full reset selected.'
+                      : `${selectedCount} selected`}
+                </p>
+                <button
+                  type="button"
+                  onClick={handleResetDatabase}
+                  disabled={resetLoading || nothingSelected || confirmInput !== confirmText}
+                  className="btn btn-danger"
+                >
+                  {resetLoading ? <Spinner /> : <Trash2 />}
+                  {resetLoading ? 'Resetting…' : 'Reset database'}
+                </button>
+              </CardFooter>
+            </Card>
+          </SettingsSection>
+        )}
+
+        <SettingsSection title="About" description="Product information and credits.">
+          <Card>
+            <CardBody className="flex items-center gap-4">
+              <Logo className="h-10 w-10 shrink-0" />
+              <div className="min-w-0">
+                <p className="section-title">Voice Compliance Auditor</p>
+                <p className="mt-0.5 text-[13px] text-fg-subtle">
+                  Developed by <span className="font-medium text-fg-muted">Abhijeet Solanki</span>
+                </p>
               </div>
-            </div>
-
-            <div className="space-y-2">
-              <label className="flex items-center">
-                <input
-                  type="checkbox"
-                  checked={resetOptions.reset_analyses}
-                  onChange={(e) => setResetOptions({ ...resetOptions, reset_analyses: e.target.checked })}
-                  className="mr-2"
-                />
-                <span className="text-gray-700 dark:text-gray-300">Reset Analysis Records</span>
-              </label>
-              <label className="flex items-center">
-                <input
-                  type="checkbox"
-                  checked={resetOptions.reset_rules}
-                  onChange={(e) => setResetOptions({ ...resetOptions, reset_rules: e.target.checked })}
-                  className="mr-2"
-                />
-                <span className="text-gray-700 dark:text-gray-300">Reset Compliance Rules</span>
-              </label>
-              <label className="flex items-center">
-                <input
-                  type="checkbox"
-                  checked={resetOptions.reset_schedules}
-                  onChange={(e) => setResetOptions({ ...resetOptions, reset_schedules: e.target.checked })}
-                  className="mr-2"
-                />
-                <span className="text-gray-700 dark:text-gray-300">Reset Scheduled Reports & Webhooks</span>
-              </label>
-              <label className="flex items-center">
-                <input
-                  type="checkbox"
-                  checked={resetOptions.reset_users}
-                  onChange={(e) => setResetOptions({ ...resetOptions, reset_users: e.target.checked })}
-                  className="mr-2"
-                />
-                <span className="text-red-700 dark:text-red-400 font-medium">
-                  Reset All Users (Full Database Reset)
-                </span>
-              </label>
-            </div>
-
-            <button
-              onClick={handleResetDatabase}
-              disabled={resetLoading || (!resetOptions.reset_analyses && !resetOptions.reset_users && !resetOptions.reset_rules && !resetOptions.reset_schedules)}
-              className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-            >
-              <Trash2 className="h-4 w-4" />
-              {resetLoading ? 'Resetting...' : 'Reset Selected Database Tables'}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Developer Credit */}
-      <div className="mt-8 card bg-gradient-to-r from-indigo-50 to-purple-50 dark:from-indigo-900/20 dark:to-purple-900/20 border border-indigo-200 dark:border-indigo-800">
-        <div className="text-center py-6">
-          <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
-            Developed with passion and dedication
-          </p>
-          <p className="text-lg font-semibold text-indigo-600 dark:text-indigo-400">
-            ✨ Abhijeet Solanki ✨
-          </p>
-          <p className="text-xs text-gray-500 dark:text-gray-500 mt-2">
-            AI Voice Compliance Auditor
-          </p>
-        </div>
+            </CardBody>
+          </Card>
+        </SettingsSection>
       </div>
     </div>
   );

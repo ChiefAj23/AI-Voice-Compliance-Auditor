@@ -1,177 +1,313 @@
-import { ReactNode } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
+import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
-  Mic,
-  History,
   BarChart3,
-  GitCompare,
-  Settings,
-  Upload,
-  Moon,
-  Sun,
-  Shield,
-  Clock,
-  Webhook,
   Bell,
+  CalendarClock,
+  ChevronDown,
+  ChevronRight,
+  GitCompare,
+  History,
+  Layers,
+  LogOut,
+  Menu,
+  Mic,
+  Moon,
+  Settings,
+  ShieldCheck,
+  Sun,
+  UserCog,
   Users,
-  UserCircle,
-  LogOut
+  Webhook,
+  X,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import clsx from 'clsx';
 import { useTheme } from '../contexts/ThemeContext';
 import { useAuth } from '../contexts/AuthContext';
+import { humanize } from '../utils/format';
+import Logo from './Logo';
+import { Avatar, Badge, IconButton } from './ui';
 
 interface LayoutProps {
   children: ReactNode;
 }
 
-const navigation = [
-  { name: 'New Analysis', href: '/', icon: Mic },
-  { name: 'Batch Processing', href: '/batch', icon: Upload },
-  { name: 'History', href: '/history', icon: History },
-  { name: 'Statistics', href: '/statistics', icon: BarChart3 },
-  { name: 'Compare', href: '/compare', icon: GitCompare },
-  { name: 'Compliance Rules', href: '/compliance-rules', icon: Shield },
-  { name: 'Scheduled Reports', href: '/scheduled-reports', icon: Clock },
-  { name: 'Webhooks', href: '/webhooks', icon: Webhook },
-  { name: 'Notifications', href: '/notifications', icon: Bell },
-  { name: 'Teams', href: '/teams', icon: Users },
-  { name: 'Users', href: '/users', icon: UserCircle },
-  { name: 'Settings', href: '/settings', icon: Settings },
+interface NavItem {
+  name: string;
+  href: string;
+  icon: LucideIcon;
+}
+
+const navigation: { label: string; items: NavItem[] }[] = [
+  {
+    label: 'Analyze',
+    items: [
+      { name: 'New analysis', href: '/', icon: Mic },
+      { name: 'Batch processing', href: '/batch', icon: Layers },
+    ],
+  },
+  {
+    label: 'Review',
+    items: [
+      { name: 'History', href: '/history', icon: History },
+      { name: 'Statistics', href: '/statistics', icon: BarChart3 },
+      { name: 'Compare', href: '/compare', icon: GitCompare },
+    ],
+  },
+  {
+    label: 'Governance',
+    items: [
+      { name: 'Compliance rules', href: '/compliance-rules', icon: ShieldCheck },
+      { name: 'Scheduled reports', href: '/scheduled-reports', icon: CalendarClock },
+    ],
+  },
+  {
+    label: 'Integrations',
+    items: [
+      { name: 'Webhooks', href: '/webhooks', icon: Webhook },
+      { name: 'Notifications', href: '/notifications', icon: Bell },
+    ],
+  },
+  {
+    label: 'Administration',
+    items: [
+      { name: 'Teams', href: '/teams', icon: Users },
+      { name: 'Users', href: '/users', icon: UserCog },
+      { name: 'Settings', href: '/settings', icon: Settings },
+    ],
+  },
 ];
 
-export default function Layout({ children }: LayoutProps) {
-  const location = useLocation();
-  const { theme, toggleTheme } = useTheme();
+const PRODUCT_NAME = 'Voice Compliance Auditor';
+
+function findCurrent(pathname: string) {
+  for (const group of navigation) {
+    const item = group.items.find((entry) => entry.href === pathname);
+    if (item) return { ...item, group: group.label };
+  }
+  return null;
+}
+
+function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
+  return (
+    <div className="flex h-full flex-col">
+      <div className="flex h-14 shrink-0 items-center gap-2.5 border-b border-line px-4">
+        <Logo className="h-7 w-7" />
+        <span className="text-[15px] font-semibold tracking-tight text-fg">Voice Auditor</span>
+      </div>
+
+      <nav aria-label="Main" className="flex-1 space-y-5 overflow-y-auto px-3 py-4">
+        {navigation.map((group) => (
+          <div key={group.label}>
+            <p className="eyebrow px-2.5 pb-1.5">{group.label}</p>
+            <ul className="space-y-0.5">
+              {group.items.map(({ name, href, icon: Icon }) => (
+                <li key={href}>
+                  <NavLink
+                    to={href}
+                    end
+                    onClick={onNavigate}
+                    className={({ isActive }) =>
+                      clsx(
+                        'group flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors',
+                        isActive
+                          ? 'bg-accent-subtle text-accent-fg'
+                          : 'text-fg-muted hover:bg-surface-subtle hover:text-fg',
+                      )
+                    }
+                  >
+                    {({ isActive }) => (
+                      <>
+                        <Icon
+                          className={clsx(
+                            'h-4 w-4 shrink-0',
+                            isActive ? 'text-accent-fg' : 'text-fg-subtle group-hover:text-fg-muted',
+                          )}
+                          aria-hidden="true"
+                        />
+                        {name}
+                      </>
+                    )}
+                  </NavLink>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </nav>
+
+      <div className="border-t border-line px-4 py-3">
+        <p className="text-xs text-fg-subtle">
+          Built by <span className="font-medium text-fg-muted">Abhijeet Solanki</span>
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function UserMenu() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
+
+  if (!user) return null;
+
+  const displayName = user.full_name || user.username;
 
   const handleLogout = () => {
+    setOpen(false);
     logout();
     navigate('/login');
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors duration-200">
-      {/* Sidebar */}
-      <aside className="fixed inset-y-0 left-0 w-64 bg-white dark:bg-gray-800 shadow-lg z-10 transition-colors duration-200">
-        <div className="flex flex-col h-full">
-          {/* Logo */}
-          <div className="flex items-center justify-between h-16 px-4 bg-primary-600 dark:bg-primary-700">
-            <h1 className="text-2xl font-bold text-white">🎙️ Voice Auditor</h1>
-            <button
-              onClick={toggleTheme}
-              className="p-2 rounded-lg hover:bg-primary-700 dark:hover:bg-primary-600 transition-colors"
-              aria-label="Toggle theme"
-            >
-              {theme === 'light' ? (
-                <Moon className="h-5 w-5 text-white" />
-              ) : (
-                <Sun className="h-5 w-5 text-white" />
-              )}
-            </button>
-          </div>
+    <div className="relative" ref={menuRef}>
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className="flex items-center gap-2 rounded-md py-1 pl-1 pr-1.5 transition-colors hover:bg-surface-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+      >
+        <Avatar name={displayName} size="sm" />
+        <span className="hidden max-w-[10rem] truncate text-sm font-medium text-fg md:block">{displayName}</span>
+        <ChevronDown className="hidden h-4 w-4 text-fg-subtle md:block" aria-hidden="true" />
+      </button>
 
-          {/* Navigation */}
-          <nav className="flex-1 px-4 py-6 space-y-2 overflow-y-auto">
-            {navigation.map((item) => {
-              const Icon = item.icon;
-              const isActive = location.pathname === item.href;
-
-              return (
-                <Link
-                  key={item.name}
-                  to={item.href}
-                  className={clsx(
-                    'flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors',
-                    isActive
-                      ? 'bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300'
-                      : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
-                  )}
-                >
-                  <Icon className="mr-3 h-5 w-5" />
-                  {item.name}
-                </Link>
-              );
-            })}
-          </nav>
-
-          {/* User Info */}
-          {user && (
-            <div className="px-4 py-4 border-t border-gray-200 dark:border-gray-700">
-              <div className="flex items-center space-x-3 mb-3">
-                <div className="flex-shrink-0">
-                  <div className="h-10 w-10 rounded-full bg-primary-600 dark:bg-primary-700 flex items-center justify-center text-white font-semibold">
-                    {user.full_name?.[0] || user.username[0].toUpperCase()}
-                  </div>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
-                    {user.full_name || user.username}
-                  </p>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                    {user.email}
-                  </p>
-                  {user.roles.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      {user.roles.slice(0, 2).map((role) => (
-                        <span
-                          key={role}
-                          className="text-xs px-1.5 py-0.5 bg-indigo-100 dark:bg-indigo-900 text-indigo-800 dark:text-indigo-200 rounded"
-                        >
-                          {role}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
+      {open && (
+        <div
+          role="menu"
+          className="absolute right-0 top-full z-40 mt-2 w-64 animate-dropdown-in rounded-lg border border-line bg-surface p-1 shadow-overlay"
+        >
+          <div className="px-3 py-2.5">
+            <p className="truncate text-sm font-medium text-fg">{displayName}</p>
+            <p className="truncate text-xs text-fg-subtle">{user.email}</p>
+            {user.roles.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1">
+                {user.roles.map((role) => (
+                  <Badge key={role}>{humanize(role)}</Badge>
+                ))}
               </div>
-              <button
-                onClick={handleLogout}
-                className="w-full flex items-center justify-center px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
-              >
-                <LogOut className="mr-2 h-4 w-4" />
-                Logout
-              </button>
-            </div>
-          )}
-
-          {/* Developer Credit */}
-          <div className="px-4 py-3 border-t border-gray-200 dark:border-gray-700 mt-auto">
-            <div className="text-center">
-              <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">
-                Developed with <span className="text-red-500">❤️</span> by
-              </p>
-              <p className="text-sm font-semibold text-indigo-600 dark:text-indigo-400">
-                Abhijeet Solanki
-              </p>
-            </div>
+            )}
           </div>
+          <div className="my-1 h-px bg-line" />
+          <Link
+            to="/settings"
+            role="menuitem"
+            onClick={() => setOpen(false)}
+            className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-fg-muted transition-colors hover:bg-surface-subtle hover:text-fg"
+          >
+            <Settings className="h-4 w-4" aria-hidden="true" />
+            Settings
+          </Link>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={handleLogout}
+            className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-fg-muted transition-colors hover:bg-surface-subtle hover:text-fg"
+          >
+            <LogOut className="h-4 w-4" aria-hidden="true" />
+            Sign out
+          </button>
         </div>
-      </aside>
-
-      {/* Main Content */}
-      <main className="ml-64 min-h-screen flex flex-col">
-        <div className="flex-1 p-8">
-          {children}
-        </div>
-
-        {/* Footer with Developer Credit */}
-        <footer className="ml-64 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 py-4 px-8">
-          <div className="flex items-center justify-between">
-            <div className="text-sm text-gray-500 dark:text-gray-400">
-              © {new Date().getFullYear()} Voice Audit System
-            </div>
-            <div className="flex items-center space-x-2 text-sm">
-              <span className="text-gray-500 dark:text-gray-400">Developed with</span>
-              <span className="text-red-500">❤️</span>
-              <span className="text-gray-500 dark:text-gray-400">by</span>
-              <span className="font-semibold text-indigo-600 dark:text-indigo-400">Abhijeet Solanki</span>
-            </div>
-          </div>
-        </footer>
-      </main>
+      )}
     </div>
   );
 }
 
+export default function Layout({ children }: LayoutProps) {
+  const location = useLocation();
+  const { theme, toggleTheme } = useTheme();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const current = findCurrent(location.pathname);
+
+  useEffect(() => {
+    setSidebarOpen(false);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    if (!sidebarOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSidebarOpen(false);
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [sidebarOpen]);
+
+  useEffect(() => {
+    document.title = current ? `${current.name} · ${PRODUCT_NAME}` : PRODUCT_NAME;
+  }, [current?.name]);
+
+  return (
+    <div className="min-h-screen bg-canvas">
+      <aside className="fixed inset-y-0 left-0 z-40 hidden w-60 border-r border-line bg-surface lg:block">
+        <Sidebar />
+      </aside>
+
+      {sidebarOpen && (
+        <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label="Navigation">
+          <div className="absolute inset-0 animate-fade-in bg-gray-950/50" onClick={() => setSidebarOpen(false)} />
+          <aside className="absolute inset-y-0 left-0 w-72 max-w-[85%] animate-slide-in border-r border-line bg-surface shadow-overlay">
+            <Sidebar onNavigate={() => setSidebarOpen(false)} />
+            <IconButton
+              icon={X}
+              label="Close navigation"
+              onClick={() => setSidebarOpen(false)}
+              className="absolute right-2 top-3"
+            />
+          </aside>
+        </div>
+      )}
+
+      <div className="lg:pl-60">
+        <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-line bg-surface/80 px-4 backdrop-blur sm:px-6 lg:px-8">
+          <IconButton icon={Menu} label="Open navigation" onClick={() => setSidebarOpen(true)} className="-ml-1.5 lg:hidden" />
+
+          <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1.5 text-sm">
+            {current && (
+              <>
+                <span className="hidden text-fg-subtle sm:inline">{current.group}</span>
+                <ChevronRight className="hidden h-3.5 w-3.5 shrink-0 text-fg-faint sm:inline" aria-hidden="true" />
+                <span className="truncate font-medium text-fg">{current.name}</span>
+              </>
+            )}
+          </nav>
+
+          <div className="ml-auto flex items-center gap-1">
+            <IconButton
+              icon={theme === 'light' ? Moon : Sun}
+              label={theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme'}
+              onClick={toggleTheme}
+            />
+            <Link to="/notifications" className="btn btn-ghost btn-icon" aria-label="Notifications" title="Notifications">
+              <Bell />
+            </Link>
+            <div className="mx-2 h-5 w-px bg-line" aria-hidden="true" />
+            <UserMenu />
+          </div>
+        </header>
+
+        <main className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">{children}</main>
+      </div>
+    </div>
+  );
+}

@@ -1,13 +1,28 @@
 import { useState, useEffect } from 'react';
-import { authApi, User, usersApi } from '../services/api';
+import type { FormEvent } from 'react';
+import { Info, KeyRound, Lock, Pencil, Search, Trash2, UserCheck, UserX, Users } from 'lucide-react';
+import api, { usersApi } from '../services/api';
+import type { Role, User } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
-import api from '../services/api';
-import { Trash2 } from 'lucide-react';
+import { humanize } from '../utils/format';
+import {
+  Avatar,
+  Badge,
+  Card,
+  EmptyState,
+  Field,
+  IconButton,
+  Modal,
+  PageHeader,
+  Spinner,
+  Switch,
+  useConfirm,
+  useToast,
+} from '../components/ui';
+import { errorDetail } from '../utils/errors';
 
-interface Role {
-  id: number;
-  name: string;
-  description?: string;
+function displayName(user: Pick<User, 'username' | 'full_name'>): string {
+  return user.full_name || user.username;
 }
 
 export default function UsersPage() {
@@ -18,7 +33,14 @@ export default function UsersPage() {
   const [showRoleManager, setShowRoleManager] = useState(false);
   const [formData, setFormData] = useState({ email: '', full_name: '', is_active: true });
   const [loading, setLoading] = useState(false);
+  const [listLoading, setListLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState('');
   const { user: currentUser } = useAuth();
+  const toast = useToast();
+  const confirm = useConfirm();
+
+  // Non-admins see the access notice instead of the list, so load errors stay quiet for them.
+  const canManageUsers = !!currentUser && (currentUser.is_superuser || currentUser.roles.includes('admin'));
 
   useEffect(() => {
     loadUsers();
@@ -31,6 +53,9 @@ export default function UsersPage() {
       setUsers(response.data);
     } catch (error) {
       console.error('Failed to load users:', error);
+      if (canManageUsers) toast.error('Could not load users', 'Check that the API is running and try again.');
+    } finally {
+      setListLoading(false);
     }
   };
 
@@ -43,7 +68,7 @@ export default function UsersPage() {
     }
   };
 
-  const handleUpdate = async (e: React.FormEvent) => {
+  const handleUpdate = async (e: FormEvent) => {
     e.preventDefault();
     if (!selectedUser) return;
     setLoading(true);
@@ -51,9 +76,10 @@ export default function UsersPage() {
       await api.put(`/api/users/${selectedUser.id}`, formData);
       setShowEdit(false);
       setSelectedUser(null);
+      toast.success('User updated');
       await loadUsers();
-    } catch (error: any) {
-      alert(error.response?.data?.detail || 'Failed to update user');
+    } catch (error) {
+      toast.error('Could not update user', errorDetail(error));
     } finally {
       setLoading(false);
     }
@@ -73,9 +99,10 @@ export default function UsersPage() {
     setLoading(true);
     try {
       await api.put(`/api/users/${userId}`, { is_active: !currentStatus });
+      toast.success(currentStatus ? 'User deactivated' : 'User activated');
       await loadUsers();
-    } catch (error: any) {
-      alert(error.response?.data?.detail || 'Failed to update user');
+    } catch (error) {
+      toast.error('Could not update user', errorDetail(error));
     } finally {
       setLoading(false);
     }
@@ -96,8 +123,8 @@ export default function UsersPage() {
       const updatedUsers = await api.get('/api/users');
       const updatedUser = updatedUsers.data.find((u: User) => u.id === selectedUser.id);
       if (updatedUser) setSelectedUser(updatedUser);
-    } catch (error: any) {
-      alert(error.response?.data?.detail || 'Failed to assign role');
+    } catch (error) {
+      toast.error('Could not assign role', errorDetail(error));
     } finally {
       setLoading(false);
     }
@@ -105,7 +132,14 @@ export default function UsersPage() {
 
   const handleRemoveRole = async (roleId: number) => {
     if (!selectedUser) return;
-    if (!confirm('Are you sure you want to remove this role?')) return;
+    const role = roles.find((r) => r.id === roleId);
+    const confirmed = await confirm({
+      title: 'Remove this role?',
+      description: `${displayName(selectedUser)} will lose the ${role ? humanize(role.name) : 'selected'} role and the permissions that come with it.`,
+      confirmLabel: 'Remove role',
+    });
+    if (!confirmed) return;
+
     setLoading(true);
     try {
       await api.delete(`/api/users/${selectedUser.id}/roles/${roleId}`);
@@ -114,278 +148,343 @@ export default function UsersPage() {
       const updatedUsers = await api.get('/api/users');
       const updatedUser = updatedUsers.data.find((u: User) => u.id === selectedUser.id);
       if (updatedUser) setSelectedUser(updatedUser);
-    } catch (error: any) {
-      alert(error.response?.data?.detail || 'Failed to remove role');
+    } catch (error) {
+      toast.error('Could not remove role', errorDetail(error));
     } finally {
       setLoading(false);
     }
   };
 
   const handleDeleteUser = async (user: User) => {
-    if (!confirm(`Are you sure you want to delete user "${user.username}"? This action cannot be undone.`)) {
-      return;
-    }
-
-    if (!confirm('This will permanently delete the user and all their associated data. Continue?')) {
-      return;
-    }
+    const confirmed = await confirm({
+      title: 'Delete this user?',
+      description: `"${user.username}" and all of their associated data will be permanently deleted. This can't be undone.`,
+      confirmLabel: 'Delete user',
+    });
+    if (!confirmed) return;
 
     setLoading(true);
     try {
       await usersApi.deleteUser(user.id);
-      alert(`User "${user.username}" has been deleted successfully.`);
+      toast.success('User deleted', `"${user.username}" has been removed.`);
       await loadUsers();
-    } catch (error: any) {
-      alert(error.response?.data?.detail || 'Failed to delete user');
+    } catch (error) {
+      toast.error('Could not delete user', errorDetail(error));
     } finally {
       setLoading(false);
     }
   };
 
+  const closeEdit = () => {
+    setShowEdit(false);
+    setSelectedUser(null);
+  };
+
+  const closeRoles = () => {
+    setShowRoleManager(false);
+    setSelectedUser(null);
+  };
+
   if (!currentUser || (!currentUser.is_superuser && !currentUser.roles.includes('admin'))) {
     return (
-      <div className="p-6">
-        <p className="text-red-600 dark:text-red-400">You don't have permission to view this page.</p>
+      <div>
+        <PageHeader title="Users" description="Manage access and roles." />
+        <Card>
+          <EmptyState
+            icon={Lock}
+            title="You don't have access to this page"
+            description="Only administrators can manage users and roles. Ask an administrator if you need access."
+          />
+        </Card>
       </div>
     );
   }
 
+  const query = searchTerm.trim().toLowerCase();
+  const filteredUsers = query
+    ? users.filter((u) => [u.full_name, u.username, u.email].some((value) => value?.toLowerCase().includes(query)))
+    : users;
+
   return (
-    <div className="p-6">
-      <h1 className="text-2xl font-bold mb-6 text-gray-900 dark:text-white">User Management</h1>
+    <div>
+      <PageHeader title="Users" description="Manage access and roles." />
 
-      {showEdit && selectedUser && (
-        <div className="mb-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
-          <h2 className="text-lg font-semibold mb-4 text-gray-900 dark:text-white">Edit User</h2>
-          <form onSubmit={handleUpdate} className="space-y-4">
-            <input
-              type="email"
-              placeholder="Email"
-              required
-              value={formData.email}
-              onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+      <Card className="overflow-hidden">
+        {/* Toolbar */}
+        <div className="border-b border-line p-4">
+          <div className="relative sm:max-w-sm">
+            <Search
+              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint"
+              aria-hidden="true"
             />
             <input
-              type="text"
-              placeholder="Full Name"
-              value={formData.full_name}
-              onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+              type="search"
+              placeholder="Search name, email or username"
+              aria-label="Search users"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="input pl-9"
             />
-            <label className="flex items-center">
-              <input
-                type="checkbox"
-                checked={formData.is_active}
-                onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
-                className="mr-2"
-              />
-              <span className="text-gray-700 dark:text-gray-300">Active</span>
-            </label>
-            <div className="flex space-x-2">
-              <button
-                type="submit"
-                disabled={loading}
-                className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50"
-              >
-                {loading ? 'Updating...' : 'Update'}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowEdit(false);
-                  setSelectedUser(null);
-                }}
-                className="px-4 py-2 bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-300 dark:hover:bg-gray-500"
-              >
-                Cancel
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
-        <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-          <thead className="bg-gray-50 dark:bg-gray-700">
-            <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                Username
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                Email
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                Full Name
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                Roles
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                Status
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                Actions
-              </th>
-            </tr>
-          </thead>
-          <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-            {users.map((user) => (
-              <tr key={user.id}>
-                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-white">
-                  {user.username}
-                  {user.is_superuser && (
-                    <span className="ml-2 px-2 py-1 text-xs bg-purple-100 dark:bg-purple-900 text-purple-800 dark:text-purple-200 rounded">
-                      Superuser
-                    </span>
-                  )}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                  {user.email}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                  {user.full_name || '-'}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="flex flex-wrap gap-1">
-                    {user.roles.map((role) => (
-                      <span
-                        key={role}
-                        className="px-2 py-1 text-xs bg-indigo-100 dark:bg-indigo-900 text-indigo-800 dark:text-indigo-200 rounded"
-                      >
-                        {role}
-                      </span>
-                    ))}
-                  </div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <span
-                    className={`px-2 py-1 text-xs rounded ${
-                      user.is_active
-                        ? 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200'
-                        : 'bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200'
-                    }`}
-                  >
-                    {user.is_active ? 'Active' : 'Inactive'}
-                  </span>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
-                  <button
-                    onClick={() => handleEdit(user)}
-                    className="text-indigo-600 dark:text-indigo-400 hover:underline"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    onClick={() => handleManageRoles(user)}
-                    className="text-blue-600 dark:text-blue-400 hover:underline"
-                  >
-                    Roles
-                  </button>
-                  <button
-                    onClick={() => handleToggleActive(user.id, user.is_active)}
-                    disabled={loading}
-                    className="text-gray-600 dark:text-gray-400 hover:underline disabled:opacity-50"
-                  >
-                    {user.is_active ? 'Deactivate' : 'Activate'}
-                  </button>
-                  {currentUser && currentUser.id !== user.id && (
-                    <button
-                      onClick={() => handleDeleteUser(user)}
-                      disabled={loading}
-                      className="text-red-600 dark:text-red-400 hover:underline disabled:opacity-50 flex items-center gap-1"
-                      title="Delete user"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                      Delete
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {users.length === 0 && (
-        <p className="text-center text-gray-500 dark:text-gray-400 mt-8">No users found.</p>
-      )}
-
-      {showRoleManager && selectedUser && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4">
-            <h2 className="text-xl font-semibold mb-4 text-gray-900 dark:text-white">
-              Manage Roles for {selectedUser.username}
-            </h2>
-
-            <div className="mb-4">
-              <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Current Roles:</h3>
-              <div className="flex flex-wrap gap-2">
-                {selectedUser.roles.length === 0 ? (
-                  <p className="text-sm text-gray-500 dark:text-gray-400">No roles assigned</p>
-                ) : (
-                  selectedUser.roles.map((roleName) => {
-                    const role = roles.find(r => r.name === roleName);
-                    return role ? (
-                      <span
-                        key={role.id}
-                        className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-indigo-100 dark:bg-indigo-900 text-indigo-800 dark:text-indigo-200"
-                      >
-                        {roleName}
-                        <button
-                          onClick={() => handleRemoveRole(role.id)}
-                          className="ml-2 text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-200"
-                        >
-                          ×
-                        </button>
-                      </span>
-                    ) : null;
-                  })
-                )}
-              </div>
-            </div>
-
-            <div className="mb-4">
-              <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Available Roles:</h3>
-              <div className="space-y-2 max-h-40 overflow-y-auto">
-                {roles
-                  .filter(role => !selectedUser.roles.includes(role.name))
-                  .map((role) => (
-                    <div
-                      key={role.id}
-                      className="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-700 rounded"
-                    >
-                      <div>
-                        <p className="text-sm font-medium text-gray-900 dark:text-white">{role.name}</p>
-                        {role.description && (
-                          <p className="text-xs text-gray-500 dark:text-gray-400">{role.description}</p>
-                        )}
-                      </div>
-                      <button
-                        onClick={() => handleAssignRole(role.id)}
-                        disabled={loading}
-                        className="px-3 py-1 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50"
-                      >
-                        Add
-                      </button>
-                    </div>
-                  ))}
-              </div>
-            </div>
-
-            <button
-              onClick={() => {
-                setShowRoleManager(false);
-                setSelectedUser(null);
-              }}
-              className="w-full px-4 py-2 bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-300 dark:hover:bg-gray-500"
-            >
-              Close
-            </button>
           </div>
         </div>
-      )}
+
+        {!listLoading && filteredUsers.length === 0 ? (
+          query ? (
+            <EmptyState
+              icon={Search}
+              title="No matching users"
+              description="Try a different name, email or username."
+              action={
+                <button type="button" onClick={() => setSearchTerm('')} className="btn btn-secondary">
+                  Clear search
+                </button>
+              }
+            />
+          ) : (
+            <EmptyState
+              icon={Users}
+              title="No users yet"
+              description="People appear here after they create an account."
+            />
+          )
+        ) : (
+          <>
+            <div className="overflow-x-auto">
+              <table className="data-table data-table-hover">
+                <thead>
+                  <tr>
+                    <th>User</th>
+                    <th>Username</th>
+                    <th>Roles</th>
+                    <th>Teams</th>
+                    <th>Status</th>
+                    <th className="text-right">
+                      <span className="sr-only">Actions</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {listLoading
+                    ? Array.from({ length: 5 }, (_, i) => (
+                        <tr key={i}>
+                          <td>
+                            <div className="flex items-center gap-3">
+                              <div className="skeleton h-8 w-8 shrink-0 rounded-full" />
+                              <div>
+                                <div className="skeleton h-4 w-32" />
+                                <div className="skeleton mt-2 h-3 w-44" />
+                              </div>
+                            </div>
+                          </td>
+                          <td><div className="skeleton h-4 w-20" /></td>
+                          <td><div className="skeleton h-5 w-16" /></td>
+                          <td><div className="skeleton h-4 w-24" /></td>
+                          <td><div className="skeleton h-5 w-16" /></td>
+                          <td />
+                        </tr>
+                      ))
+                    : filteredUsers.map((user) => (
+                        <tr key={user.id}>
+                          <td>
+                            <div className="flex items-center gap-3">
+                              <Avatar name={displayName(user)} />
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <p className="truncate font-medium text-fg">{displayName(user)}</p>
+                                  {currentUser.id === user.id && <Badge>You</Badge>}
+                                </div>
+                                <p className="truncate text-xs text-fg-subtle">{user.email}</p>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="whitespace-nowrap text-fg-muted">{user.username}</td>
+                          <td>
+                            {user.roles.length > 0 ? (
+                              <div className="flex flex-wrap gap-1">
+                                {user.roles.map((role) => (
+                                  <Badge key={role} tone={role === 'admin' ? 'accent' : 'neutral'}>
+                                    {humanize(role)}
+                                  </Badge>
+                                ))}
+                              </div>
+                            ) : (
+                              <span className="text-fg-faint">—</span>
+                            )}
+                          </td>
+                          <td>
+                            {user.teams.length > 0 ? (
+                              <span className="block max-w-[14rem] truncate text-fg-muted" title={user.teams.join(', ')}>
+                                {user.teams.join(', ')}
+                              </span>
+                            ) : (
+                              <span className="text-fg-faint">—</span>
+                            )}
+                          </td>
+                          <td>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              {user.is_active ? (
+                                <Badge tone="success" dot>
+                                  Active
+                                </Badge>
+                              ) : (
+                                <Badge tone="neutral" dot>
+                                  Inactive
+                                </Badge>
+                              )}
+                              {user.is_superuser && <Badge tone="accent">Superuser</Badge>}
+                            </div>
+                          </td>
+                          <td>
+                            <div className="flex items-center justify-end gap-0.5">
+                              <IconButton icon={KeyRound} label="Manage roles" onClick={() => handleManageRoles(user)} />
+                              <IconButton icon={Pencil} label="Edit user" onClick={() => handleEdit(user)} />
+                              <IconButton
+                                icon={user.is_active ? UserX : UserCheck}
+                                label={user.is_active ? 'Deactivate user' : 'Activate user'}
+                                disabled={loading}
+                                onClick={() => handleToggleActive(user.id, user.is_active)}
+                              />
+                              {currentUser && currentUser.id !== user.id ? (
+                                <IconButton
+                                  icon={Trash2}
+                                  label="Delete user"
+                                  tone="danger"
+                                  disabled={loading}
+                                  onClick={() => handleDeleteUser(user)}
+                                />
+                              ) : (
+                                // Keeps the action columns aligned on your own row, which can't be deleted.
+                                <span className="h-8 w-8 shrink-0" aria-hidden="true" />
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="border-t border-line px-4 py-3">
+              <p className="text-[13px] tabular-nums text-fg-subtle">
+                {listLoading
+                  ? 'Loading…'
+                  : query
+                    ? `Showing ${filteredUsers.length} of ${users.length} users`
+                    : `${users.length} ${users.length === 1 ? 'user' : 'users'}`}
+              </p>
+            </div>
+          </>
+        )}
+      </Card>
+
+      {/* Edit user */}
+      <Modal
+        open={showEdit && selectedUser !== null}
+        onClose={closeEdit}
+        size="lg"
+        title="Edit user"
+        description={
+          selectedUser && (
+            <>
+              Update profile details for <span className="font-medium text-fg">{selectedUser.username}</span>.
+            </>
+          )
+        }
+        footer={
+          <>
+            <button type="button" onClick={closeEdit} className="btn btn-secondary">
+              Cancel
+            </button>
+            <button type="submit" form="edit-user-form" disabled={loading} className="btn btn-primary">
+              {loading && <Spinner />}
+              {loading ? 'Saving…' : 'Save changes'}
+            </button>
+          </>
+        }
+      >
+        <form id="edit-user-form" onSubmit={handleUpdate} className="space-y-5">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Full name" htmlFor="user-full-name">
+              <input
+                id="user-full-name"
+                type="text"
+                value={formData.full_name}
+                onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
+                className="input"
+              />
+            </Field>
+            <Field label="Email" htmlFor="user-email" required>
+              <input
+                id="user-email"
+                type="email"
+                required
+                value={formData.email}
+                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                className="input"
+              />
+            </Field>
+          </div>
+          <div className="rounded-lg border border-line px-4 py-3">
+            <Switch
+              checked={formData.is_active}
+              onChange={(checked) => setFormData({ ...formData, is_active: checked })}
+              label="Active"
+              description="Inactive users can't sign in."
+            />
+          </div>
+        </form>
+      </Modal>
+
+      {/* Role management */}
+      <Modal
+        open={showRoleManager && selectedUser !== null}
+        onClose={closeRoles}
+        title="Manage roles"
+        description={
+          selectedUser && (
+            <>
+              Choose what <span className="font-medium text-fg">{displayName(selectedUser)}</span> can access. Changes
+              apply right away.
+            </>
+          )
+        }
+        footer={
+          <button type="button" onClick={closeRoles} className="btn btn-secondary">
+            Done
+          </button>
+        }
+      >
+        {selectedUser && (
+          <div className="space-y-4">
+            {selectedUser.is_superuser && (
+              <div className="callout callout-info">
+                <Info />
+                <div>Superusers have every permission, whatever roles they're assigned.</div>
+              </div>
+            )}
+            {roles.length === 0 ? (
+              <p className="py-4 text-center text-sm text-fg-subtle">No roles are available.</p>
+            ) : (
+              <ul className="divide-y divide-line">
+                {roles.map((role) => (
+                  <li key={role.id} className="py-3 first:pt-0 last:pb-0">
+                    <Switch
+                      checked={selectedUser.roles.includes(role.name)}
+                      onChange={(checked) => {
+                        if (checked) handleAssignRole(role.id);
+                        else handleRemoveRole(role.id);
+                      }}
+                      label={humanize(role.name)}
+                      description={role.description}
+                      disabled={loading}
+                    />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
-

@@ -1,10 +1,22 @@
 import { useState, useEffect } from 'react';
-import { commentsApi, Comment, CommentCreate } from '../services/api';
+import type { FormEvent } from 'react';
+import clsx from 'clsx';
+import { MessageSquare, Pencil, Reply, Trash2 } from 'lucide-react';
+import { commentsApi } from '../services/api';
+import type { Comment, CommentCreate } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
+import { formatDateTime, formatRelative } from '../utils/format';
+import { Avatar, Card, CardHeader, EmptyState, IconButton, LoadingState, useConfirm, useToast } from './ui';
+import { errorDetail } from '../utils/errors';
 
 interface CommentsProps {
   analysisId: number;
 }
+
+// The API sends naive UTC timestamps ("2025-11-24T10:00:00"). Read them as UTC so
+// relative times ("3 minutes ago") are right in every time zone.
+const HAS_ZONE = /(?:[zZ]|[+-]\d{2}:?\d{2})$/;
+const asUtc = (value: string) => (value && !HAS_ZONE.test(value) ? `${value}Z` : value);
 
 export default function Comments({ analysisId }: CommentsProps) {
   const [comments, setComments] = useState<Comment[]>([]);
@@ -14,7 +26,10 @@ export default function Comments({ analysisId }: CommentsProps) {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editText, setEditText] = useState('');
   const [loading, setLoading] = useState(false);
+  const [initialLoad, setInitialLoad] = useState(true);
   const { user } = useAuth();
+  const toast = useToast();
+  const confirm = useConfirm();
 
   useEffect(() => {
     loadComments();
@@ -26,10 +41,13 @@ export default function Comments({ analysisId }: CommentsProps) {
       setComments(data);
     } catch (error) {
       console.error('Failed to load comments:', error);
+      toast.error('Could not load comments', errorDetail(error));
+    } finally {
+      setInitialLoad(false);
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!newComment.trim()) return;
 
@@ -44,6 +62,7 @@ export default function Comments({ analysisId }: CommentsProps) {
       await loadComments();
     } catch (error) {
       console.error('Failed to create comment:', error);
+      toast.error('Could not post comment', errorDetail(error));
     } finally {
       setLoading(false);
     }
@@ -65,6 +84,7 @@ export default function Comments({ analysisId }: CommentsProps) {
       await loadComments();
     } catch (error) {
       console.error('Failed to create reply:', error);
+      toast.error('Could not post reply', errorDetail(error));
     } finally {
       setLoading(false);
     }
@@ -81,27 +101,31 @@ export default function Comments({ analysisId }: CommentsProps) {
       await loadComments();
     } catch (error) {
       console.error('Failed to update comment:', error);
+      toast.error('Could not save changes', errorDetail(error));
     } finally {
       setLoading(false);
     }
   };
 
   const handleDelete = async (commentId: number) => {
-    if (!confirm('Are you sure you want to delete this comment?')) return;
+    const confirmed = await confirm({
+      title: 'Delete comment?',
+      description: 'This comment will be permanently removed. This can’t be undone.',
+      confirmLabel: 'Delete comment',
+    });
+    if (!confirmed) return;
 
     setLoading(true);
     try {
       await commentsApi.deleteComment(commentId);
+      toast.success('Comment deleted');
       await loadComments();
     } catch (error) {
       console.error('Failed to delete comment:', error);
+      toast.error('Could not delete comment', errorDetail(error));
     } finally {
       setLoading(false);
     }
-  };
-
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleString();
   };
 
   const renderComment = (comment: Comment, level = 0) => {
@@ -109,119 +133,121 @@ export default function Comments({ analysisId }: CommentsProps) {
     const isEditing = editingId === comment.id;
     const isReplying = replyingTo === comment.id;
     const replies = comments.filter(c => c.parent_comment_id === comment.id);
+    const authorName = comment.author_name || comment.author || 'Unknown user';
 
     return (
-      <div key={comment.id} className={`${level > 0 ? 'ml-8 mt-4' : 'mt-4'}`}>
-        <div className="bg-white dark:bg-gray-800 rounded-lg p-4 shadow-sm border border-gray-200 dark:border-gray-700">
-          <div className="flex items-start justify-between">
-            <div className="flex-1">
-              <div className="flex items-center space-x-2">
-                <span className="font-semibold text-gray-900 dark:text-white">
-                  {comment.author_name || comment.author}
-                </span>
-                <span className="text-sm text-gray-500 dark:text-gray-400">
-                  {formatDate(comment.created_at)}
-                </span>
-                {comment.is_edited && (
-                  <span className="text-xs text-gray-400 dark:text-gray-500">(edited)</span>
-                )}
-              </div>
-              {isEditing ? (
-                <div className="mt-2">
-                  <textarea
-                    value={editText}
-                    onChange={(e) => setEditText(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                    rows={3}
-                  />
-                  <div className="mt-2 flex space-x-2">
-                    <button
-                      onClick={() => handleEdit(comment.id)}
-                      className="px-3 py-1 bg-indigo-600 text-white rounded text-sm hover:bg-indigo-700"
-                    >
-                      Save
-                    </button>
-                    <button
-                      onClick={() => {
-                        setEditingId(null);
-                        setEditText('');
-                      }}
-                      className="px-3 py-1 bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 rounded text-sm hover:bg-gray-300 dark:hover:bg-gray-500"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <p className="mt-2 text-gray-700 dark:text-gray-300 whitespace-pre-wrap">
-                  {comment.content}
-                </p>
-              )}
+      <div key={comment.id} className="flex gap-3">
+        <Avatar name={authorName} size={level > 0 ? 'sm' : 'md'} />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5 pt-1">
+              <span className="truncate text-sm font-medium text-fg">{authorName}</span>
+              <time dateTime={asUtc(comment.created_at)} title={formatDateTime(asUtc(comment.created_at))} className="text-xs text-fg-subtle">
+                {formatRelative(asUtc(comment.created_at))}
+              </time>
+              {comment.is_edited && <span className="text-xs text-fg-faint">Edited</span>}
             </div>
-            {(isAuthor || user?.is_superuser) && !isEditing && (
-              <div className="flex space-x-2 ml-4">
-                <button
-                  onClick={() => {
-                    setEditingId(comment.id);
-                    setEditText(comment.content);
-                  }}
-                  className="text-sm text-indigo-600 dark:text-indigo-400 hover:underline"
-                >
-                  Edit
-                </button>
-                <button
-                  onClick={() => handleDelete(comment.id)}
-                  className="text-sm text-red-600 dark:text-red-400 hover:underline"
-                >
-                  Delete
-                </button>
+            {!isEditing && (
+              <div className="-mr-2 -mt-0.5 flex shrink-0 items-center gap-0.5">
+                <IconButton
+                  icon={Reply}
+                  label="Reply"
+                  aria-expanded={isReplying}
+                  onClick={() => setReplyingTo(replyingTo === comment.id ? null : comment.id)}
+                  className={clsx(isReplying && 'bg-surface-subtle text-fg')}
+                />
+                {(isAuthor || user?.is_superuser) && (
+                  <>
+                    <IconButton
+                      icon={Pencil}
+                      label="Edit comment"
+                      onClick={() => {
+                        setEditingId(comment.id);
+                        setEditText(comment.content);
+                      }}
+                    />
+                    <IconButton icon={Trash2} label="Delete comment" tone="danger" onClick={() => handleDelete(comment.id)} />
+                  </>
+                )}
               </div>
             )}
           </div>
-          {!isEditing && (
-            <div className="mt-2">
-              <button
-                onClick={() => setReplyingTo(replyingTo === comment.id ? null : comment.id)}
-                className="text-sm text-indigo-600 dark:text-indigo-400 hover:underline"
-              >
-                {isReplying ? 'Cancel' : 'Reply'}
-              </button>
+
+          {isEditing ? (
+            <div className="mt-2 space-y-2">
+              <textarea
+                value={editText}
+                onChange={(e) => setEditText(e.target.value)}
+                aria-label="Edit comment"
+                className="input"
+                rows={3}
+                autoFocus
+              />
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingId(null);
+                    setEditText('');
+                  }}
+                  className="btn btn-secondary btn-sm"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleEdit(comment.id)}
+                  disabled={loading || !editText.trim()}
+                  className="btn btn-primary btn-sm"
+                >
+                  Save
+                </button>
+              </div>
             </div>
+          ) : (
+            <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-fg">{comment.content}</p>
           )}
+
           {isReplying && (
-            <div className="mt-3">
+            <div className="mt-3 space-y-2">
               <textarea
                 value={replyText}
                 onChange={(e) => setReplyText(e.target.value)}
-                placeholder="Write a reply..."
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                placeholder={`Reply to ${authorName}`}
+                aria-label={`Reply to ${authorName}`}
+                className="input"
                 rows={2}
+                autoFocus
               />
-              <div className="mt-2 flex space-x-2">
+              <div className="flex justify-end gap-2">
                 <button
-                  onClick={() => handleReply(comment.id)}
-                  className="px-3 py-1 bg-indigo-600 text-white rounded text-sm hover:bg-indigo-700"
-                >
-                  Post Reply
-                </button>
-                <button
+                  type="button"
                   onClick={() => {
                     setReplyingTo(null);
                     setReplyText('');
                   }}
-                  className="px-3 py-1 bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 rounded text-sm hover:bg-gray-300 dark:hover:bg-gray-500"
+                  className="btn btn-secondary btn-sm"
                 >
                   Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleReply(comment.id)}
+                  disabled={loading || !replyText.trim()}
+                  className="btn btn-primary btn-sm"
+                >
+                  Reply
                 </button>
               </div>
             </div>
           )}
+
+          {replies.length > 0 && (
+            <div className="mt-4 space-y-4 border-l border-line pl-4">
+              {replies.map((reply) => renderComment(reply, level + 1))}
+            </div>
+          )}
         </div>
-        {replies.length > 0 && (
-          <div className="mt-2">
-            {replies.map((reply) => renderComment(reply, level + 1))}
-          </div>
-        )}
       </div>
     );
   };
@@ -229,40 +255,57 @@ export default function Comments({ analysisId }: CommentsProps) {
   const topLevelComments = comments.filter(c => !c.parent_comment_id);
 
   return (
-    <div className="mt-6">
-      <h3 className="text-lg font-semibold mb-4 text-gray-900 dark:text-white">💬 Comments</h3>
+    <Card>
+      <CardHeader title="Comments" description="Discuss this call with your team." />
 
-      {user ? (
-        <form onSubmit={handleSubmit} className="mb-6">
-          <textarea
-            value={newComment}
-            onChange={(e) => setNewComment(e.target.value)}
-            placeholder="Add a comment..."
-            className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-            rows={3}
-          />
-          <button
-            type="submit"
-            disabled={loading || !newComment.trim()}
-            className="mt-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {loading ? 'Posting...' : 'Post Comment'}
-          </button>
-        </form>
+      {initialLoad ? (
+        <LoadingState label="Loading comments…" className="py-10" />
+      ) : topLevelComments.length === 0 ? (
+        <EmptyState
+          icon={MessageSquare}
+          title="No comments yet"
+          description="Start the discussion with a note or question about this call."
+          className="py-10"
+        />
       ) : (
-        <p className="text-gray-500 dark:text-gray-400 mb-4">
-          Please <a href="/login" className="text-indigo-600 dark:text-indigo-400 hover:underline">login</a> to add comments.
-        </p>
+        <ul className="divide-y divide-line">
+          {topLevelComments.map((comment) => (
+            <li key={comment.id} className="px-5 py-4">
+              {renderComment(comment)}
+            </li>
+          ))}
+        </ul>
       )}
 
-      <div className="space-y-4">
-        {topLevelComments.length === 0 ? (
-          <p className="text-gray-500 dark:text-gray-400">No comments yet. Be the first to comment!</p>
+      <div className="border-t border-line px-5 py-4">
+        {user ? (
+          <form onSubmit={handleSubmit} className="flex gap-3">
+            <Avatar name={user.full_name || user.username} />
+            <div className="min-w-0 flex-1 space-y-2">
+              <textarea
+                value={newComment}
+                onChange={(e) => setNewComment(e.target.value)}
+                placeholder="Add a comment"
+                aria-label="Add a comment"
+                className="input"
+                rows={3}
+              />
+              <div className="flex justify-end">
+                <button type="submit" disabled={loading || !newComment.trim()} className="btn btn-primary">
+                  Comment
+                </button>
+              </div>
+            </div>
+          </form>
         ) : (
-          topLevelComments.map((comment) => renderComment(comment))
+          <p className="text-sm text-fg-subtle">
+            <a href="/login" className="link">
+              Sign in
+            </a>{' '}
+            to join the discussion.
+          </p>
         )}
       </div>
-    </div>
+    </Card>
   );
 }
-
