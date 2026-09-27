@@ -1,6 +1,157 @@
-import { useState, useEffect } from 'react';
-import { apiService, NotificationConfig } from '../services/api';
-import { Plus, Edit2, Trash2, Play, Filter, X, CheckCircle2, Bell, Mail } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import type { FormEvent, ReactNode } from 'react';
+import { Bell, CheckCircle2, Filter, Loader2, Mail, Pencil, Plus, Send, Trash2, X, XCircle } from 'lucide-react';
+import clsx from 'clsx';
+import { apiService } from '../services/api';
+import type { NotificationConfig } from '../services/api';
+import { formatDateTime, formatNumber, formatRelative } from '../utils/format';
+import {
+  Badge,
+  Card,
+  EmptyState,
+  Field,
+  IconButton,
+  Modal,
+  PageHeader,
+  SegmentedControl,
+  Spinner,
+  Switch,
+  useConfirm,
+  useToast,
+} from '../components/ui';
+import { errorDetail } from '../utils/errors';
+
+type StatusFilter = 'all' | 'active' | 'paused';
+
+const STATUS_OPTIONS: { value: StatusFilter; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'active', label: 'Active' },
+  { value: 'paused', label: 'Paused' },
+];
+
+/** Threshold the backend applies when no minimum score is set (api/email_notification.py). */
+const DEFAULT_MIN_SCORE = 70;
+
+/** Placeholders the email service replaces in the subject and body. */
+const EMAIL_PLACEHOLDERS = [
+  'compliance_score',
+  'toxicity_score',
+  'sentiment',
+  'emotion',
+  'total_alerts',
+  'critical_alerts',
+  'warning_alerts',
+  'filename',
+  'timestamp',
+];
+
+/** Result of POST /notification_configs/{id}/test. */
+interface NotificationTestResponse {
+  success?: boolean;
+  recipients?: string[] | null;
+  error?: string | null;
+}
+
+const emptyForm = (): Partial<NotificationConfig> => ({
+  name: '',
+  description: '',
+  email_recipients: [],
+  notify_on_critical: true,
+  notify_on_warning: false,
+  notify_on_compliance_low: true,
+  notify_on_custom_rule: true,
+  min_compliance_score: undefined,
+  email_subject_template: '',
+  email_body_template: '',
+  rate_limit_minutes: 60,
+  is_active: true,
+});
+
+function triggerLabels(config: NotificationConfig): string[] {
+  const labels: string[] = [];
+  if (config.notify_on_critical) labels.push('Critical alerts');
+  if (config.notify_on_warning) labels.push('Warnings');
+  if (config.notify_on_compliance_low) labels.push(`Score below ${config.min_compliance_score || DEFAULT_MIN_SCORE}`);
+  if (config.notify_on_custom_rule) labels.push('Rule violations');
+  return labels;
+}
+
+/** 30 -> "At most every 30 min", 60 -> "At most once an hour". */
+function rateLimitLabel(minutes: number | null | undefined): string {
+  const value = minutes || 60;
+  if (value % 1440 === 0) return value === 1440 ? 'At most once a day' : `At most every ${value / 1440} days`;
+  if (value % 60 === 0) return value === 60 ? 'At most once an hour' : `At most every ${value / 60} hours`;
+  return value === 1 ? 'At most once a minute' : `At most every ${value} min`;
+}
+
+/** Titled group of fields inside the create/edit dialog. */
+function FormSection({ title, description, children }: { title: string; description?: ReactNode; children: ReactNode }) {
+  return (
+    <section className="py-6 first:pt-0 last:pb-0">
+      <h3 className="section-title">{title}</h3>
+      {description && <p className="help-text mt-0.5">{description}</p>}
+      <div className="mt-4">{children}</div>
+    </section>
+  );
+}
+
+/**
+ * One notification in the list. Narrow screens: name and actions on top, details and
+ * delivery stats full width below. Wide screens: delivery stats become a column.
+ */
+function NotificationRow({
+  title,
+  actions,
+  details,
+  meta,
+  footer,
+}: {
+  title: ReactNode;
+  actions: ReactNode;
+  details: ReactNode;
+  meta: ReactNode;
+  footer?: ReactNode;
+}) {
+  return (
+    <li className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 px-5 py-4 lg:grid-cols-[minmax(0,1fr)_13rem_auto]">
+      <div className="col-start-1 row-start-1 min-w-0">{title}</div>
+      <div className="col-start-2 row-start-1 -mr-2 -mt-1.5 flex items-center gap-0.5 self-start lg:col-start-3 lg:row-span-2 lg:row-start-1">
+        {actions}
+      </div>
+      <div className="col-span-2 col-start-1 row-start-2 mt-0.5 min-w-0 lg:col-span-1 lg:col-start-1">{details}</div>
+      <div className="col-span-2 col-start-1 row-start-3 mt-3 min-w-0 text-[13px] lg:col-span-1 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:mt-0">
+        {meta}
+      </div>
+      {footer && <div className="col-span-2 col-start-1 row-start-4 mt-4 lg:col-span-3 lg:col-start-1 lg:row-start-3">{footer}</div>}
+    </li>
+  );
+}
+
+function TestResultCallout({ result, onDismiss }: { result: NotificationTestResponse; onDismiss: () => void }) {
+  const sent = Boolean(result.success);
+  const Icon = sent ? CheckCircle2 : XCircle;
+
+  return (
+    <div className={clsx('callout', sent ? 'callout-success' : 'callout-danger')}>
+      <Icon aria-hidden="true" />
+      <div className="min-w-0 flex-1">
+        <p className="font-medium">{sent ? 'Test email sent' : 'Test email failed'}</p>
+        {sent && result.recipients && result.recipients.length > 0 && (
+          <p className="mt-0.5 break-words">Sent to {result.recipients.join(', ')}.</p>
+        )}
+        {result.error && <p className="mt-0.5 break-words">{result.error}</p>}
+      </div>
+      <button
+        type="button"
+        onClick={onDismiss}
+        aria-label="Dismiss test result"
+        className="-m-1 grid h-6 w-6 shrink-0 place-items-center rounded opacity-70 transition-opacity hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+      >
+        <X className="h-4 w-4" aria-hidden="true" />
+      </button>
+    </div>
+  );
+}
 
 export default function NotificationsPage() {
   const [configs, setConfigs] = useState<NotificationConfig[]>([]);
@@ -8,24 +159,16 @@ export default function NotificationsPage() {
   const [showForm, setShowForm] = useState(false);
   const [editingConfig, setEditingConfig] = useState<NotificationConfig | null>(null);
   const [filter, setFilter] = useState<{ isActive?: boolean }>({});
-  const [testResult, setTestResult] = useState<any>(null);
+  const [testResult, setTestResult] = useState<{ config: NotificationConfig; result: NotificationTestResponse } | null>(null);
+  const [testingId, setTestingId] = useState<number | null>(null);
+  const [saving, setSaving] = useState(false);
 
-  const [formData, setFormData] = useState<Partial<NotificationConfig>>({
-    name: '',
-    description: '',
-    email_recipients: [],
-    notify_on_critical: true,
-    notify_on_warning: false,
-    notify_on_compliance_low: true,
-    notify_on_custom_rule: true,
-    min_compliance_score: undefined,
-    email_subject_template: '',
-    email_body_template: '',
-    rate_limit_minutes: 60,
-    is_active: true,
-  });
+  const [formData, setFormData] = useState<Partial<NotificationConfig>>(emptyForm);
 
   const [emailInput, setEmailInput] = useState('');
+
+  const toast = useToast();
+  const confirm = useConfirm();
 
   useEffect(() => {
     loadConfigs();
@@ -38,19 +181,22 @@ export default function NotificationsPage() {
       setConfigs(response.configs);
     } catch (error) {
       console.error('Failed to load notification configs:', error);
-      alert('Failed to load notification configurations');
+      toast.error('Could not load notifications', 'Check that the API is running and try again.');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    setSaving(true);
     try {
       if (editingConfig?.id) {
         await apiService.updateNotificationConfig(editingConfig.id, formData);
+        toast.success('Notification updated');
       } else {
         await apiService.createNotificationConfig(formData);
+        toast.success('Notification created');
       }
       setShowForm(false);
       setEditingConfig(null);
@@ -58,53 +204,63 @@ export default function NotificationsPage() {
       loadConfigs();
     } catch (error) {
       console.error('Failed to save notification config:', error);
-      alert('Failed to save notification configuration');
+      toast.error('Could not save notification', errorDetail(error));
+    } finally {
+      setSaving(false);
     }
   };
 
   const handleEdit = (config: NotificationConfig) => {
     setEditingConfig(config);
     setFormData(config);
-    setEmailInput(config.email_recipients?.join(', ') || '');
+    // Existing addresses already show as removable chips; the input is only for adding more.
+    setEmailInput('');
     setShowForm(true);
   };
 
   const handleDelete = async (id: number) => {
-    if (!confirm('Are you sure you want to delete this notification configuration?')) return;
+    const config = configs.find((item) => item.id === id);
+    const confirmed = await confirm({
+      title: 'Delete notification?',
+      description: `${config ? `"${config.name}"` : 'This notification'} will stop sending emails. This can't be undone.`,
+      confirmLabel: 'Delete notification',
+    });
+    if (!confirmed) return;
+
     try {
       await apiService.deleteNotificationConfig(id);
+      if (testResult?.config.id === id) setTestResult(null);
+      toast.success('Notification deleted');
       loadConfigs();
     } catch (error) {
       console.error('Failed to delete notification config:', error);
-      alert('Failed to delete notification configuration');
+      toast.error('Could not delete notification', errorDetail(error));
     }
   };
 
   const handleTest = async (config: NotificationConfig) => {
+    setTestingId(config.id ?? null);
     try {
-      const result = await apiService.testNotificationConfig(config.id!);
+      const result: NotificationTestResponse = (await apiService.testNotificationConfig(config.id!)) ?? {};
       setTestResult({ config: config, result });
+      if (result.success) {
+        toast.success(
+          'Test email sent',
+          result.recipients && result.recipients.length > 0 ? `Sent to ${result.recipients.join(', ')}.` : undefined,
+        );
+      } else {
+        toast.error('Test email failed', result.error || undefined);
+      }
     } catch (error) {
       console.error('Failed to test notification:', error);
-      alert('Failed to test notification');
+      toast.error('Could not send test email', errorDetail(error));
+    } finally {
+      setTestingId(null);
     }
   };
 
   const resetForm = () => {
-    setFormData({
-      name: '',
-      description: '',
-      email_recipients: [],
-      notify_on_critical: true,
-      notify_on_warning: false,
-      notify_on_compliance_low: true,
-      notify_on_custom_rule: true,
-      min_compliance_score: undefined,
-      email_subject_template: '',
-      email_body_template: '',
-      rate_limit_minutes: 60,
-      is_active: true,
-    });
+    setFormData(emptyForm());
     setEmailInput('');
   };
 
@@ -121,101 +277,278 @@ export default function NotificationsPage() {
     });
   };
 
+  const openCreateForm = () => {
+    resetForm();
+    setEditingConfig(null);
+    setShowForm(true);
+  };
+
+  const closeForm = () => {
+    setShowForm(false);
+    setEditingConfig(null);
+    resetForm();
+  };
+
+  const statusFilter: StatusFilter = filter.isActive === undefined ? 'all' : filter.isActive ? 'active' : 'paused';
+
+  const changeStatusFilter = (value: StatusFilter) => {
+    if (value === statusFilter) return;
+    setFilter(value === 'all' ? {} : { isActive: value === 'active' });
+  };
+
+  const recipients = formData.email_recipients || [];
+
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h1 className="text-3xl font-bold">Email Notifications</h1>
-        <button
-          onClick={() => {
-            resetForm();
-            setEditingConfig(null);
-            setShowForm(true);
-          }}
-          className="btn-primary flex items-center"
-        >
-          <Plus className="h-5 w-5 mr-2" />
-          Create Configuration
-        </button>
-      </div>
-
-      {/* Filters */}
-      <div className="card flex items-center gap-4">
-        <Filter className="h-5 w-5 text-gray-500" />
-        <select
-          value={filter.isActive === undefined ? '' : filter.isActive.toString()}
-          onChange={(e) =>
-            setFilter({
-              isActive: e.target.value === '' ? undefined : e.target.value === 'true',
-            })
-          }
-          className="input"
-        >
-          <option value="">All Status</option>
-          <option value="true">Active</option>
-          <option value="false">Inactive</option>
-        </select>
-        {filter.isActive !== undefined && (
-          <button
-            onClick={() => setFilter({})}
-            className="text-sm text-gray-600 hover:text-gray-800 flex items-center"
-          >
-            <X className="h-4 w-4 mr-1" />
-            Clear
+    <div>
+      <PageHeader
+        title="Notifications"
+        description="Email alerts when calls need attention."
+        actions={
+          <button onClick={openCreateForm} className="btn btn-primary">
+            <Plus />
+            Add notification
           </button>
-        )}
-      </div>
+        }
+      />
 
-      {/* Create/Edit Form */}
-      {showForm && (
-        <div className="card">
-          <h2 className="text-xl font-semibold mb-4">
-            {editingConfig ? 'Edit Notification Configuration' : 'Create New Notification Configuration'}
-          </h2>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="label">Configuration Name *</label>
+      <Card className="overflow-hidden">
+        {/* Toolbar */}
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line p-4">
+          <SegmentedControl
+            label="Filter notifications by status"
+            options={STATUS_OPTIONS}
+            value={statusFilter}
+            onChange={changeStatusFilter}
+          />
+          {!loading && configs.length > 0 && (
+            <p className="text-[13px] tabular-nums text-fg-subtle">
+              {configs.length} {configs.length === 1 ? 'notification' : 'notifications'}
+            </p>
+          )}
+        </div>
+
+        {loading ? (
+          <div role="status">
+            <span className="sr-only">Loading notifications…</span>
+            <ul className="divide-y divide-line" aria-hidden="true">
+              {Array.from({ length: 3 }, (_, i) => (
+                <li key={i} className="px-5 py-4">
+                  <div className="skeleton h-4 w-48" />
+                  <div className="skeleton mt-2 h-3 w-72 max-w-full" />
+                  <div className="mt-3.5 flex gap-1.5">
+                    <div className="skeleton h-5 w-40" />
+                    <div className="skeleton h-5 w-36" />
+                  </div>
+                  <div className="mt-2 flex gap-1.5">
+                    <div className="skeleton h-5 w-24" />
+                    <div className="skeleton h-5 w-28" />
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : configs.length === 0 ? (
+          filter.isActive !== undefined ? (
+            <EmptyState
+              icon={Filter}
+              title={filter.isActive ? 'No active notifications' : 'No paused notifications'}
+              description="Try another status filter."
+              action={
+                <button onClick={() => setFilter({})} className="btn btn-secondary">
+                  Show all notifications
+                </button>
+              }
+            />
+          ) : (
+            <EmptyState
+              icon={Bell}
+              title="No notifications yet"
+              description="Email your team when a call scores low, raises an alert or breaks a compliance rule."
+              action={
+                <button onClick={openCreateForm} className="btn btn-secondary">
+                  <Plus />
+                  Add notification
+                </button>
+              }
+            />
+          )
+        ) : (
+          <ul className="divide-y divide-line">
+            {configs.map((config) => {
+              const triggers = triggerLabels(config);
+              const configRecipients = config.email_recipients || [];
+              const shownRecipients = configRecipients.slice(0, 2);
+              const hiddenRecipients = configRecipients.slice(2);
+              const sentCount = config.sent_count || 0;
+              const isTesting = testingId !== null && testingId === config.id;
+              const result = testResult && testResult.config.id === config.id ? testResult.result : null;
+
+              return (
+                <NotificationRow
+                  key={config.id}
+                  title={
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <p className="font-medium text-fg">{config.name}</p>
+                      {config.is_active ? (
+                        <Badge tone="success" dot>
+                          Active
+                        </Badge>
+                      ) : (
+                        <Badge tone="neutral" dot>
+                          Paused
+                        </Badge>
+                      )}
+                    </div>
+                  }
+                  actions={
+                    <>
+                      <IconButton
+                        icon={isTesting ? Loader2 : Send}
+                        label={isTesting ? 'Sending test…' : 'Send test'}
+                        onClick={() => handleTest(config)}
+                        disabled={isTesting}
+                        className={isTesting ? '[&>svg]:animate-spin' : undefined}
+                      />
+                      <IconButton icon={Pencil} label="Edit notification" onClick={() => handleEdit(config)} />
+                      <IconButton
+                        icon={Trash2}
+                        label="Delete notification"
+                        tone="danger"
+                        onClick={() => handleDelete(config.id!)}
+                      />
+                    </>
+                  }
+                  details={
+                    <>
+                      {config.description && <p className="text-[13px] text-fg-subtle">{config.description}</p>}
+                      <div className="mt-2.5 flex min-w-0 flex-wrap items-center gap-1.5">
+                        <Mail className="h-3.5 w-3.5 shrink-0 text-fg-faint" aria-hidden="true" />
+                        <span className="sr-only">Recipients:</span>
+                        {configRecipients.length === 0 ? (
+                          <span className="text-xs text-fg-faint">No recipients</span>
+                        ) : (
+                          shownRecipients.map((email, idx) => (
+                            <Badge key={`${email}-${idx}`} className="max-w-[16rem]">
+                              <span className="truncate" title={email}>
+                                {email}
+                              </span>
+                            </Badge>
+                          ))
+                        )}
+                        {hiddenRecipients.length > 0 && (
+                          <span title={hiddenRecipients.join(', ')}>
+                            <Badge className="tabular-nums">
+                              +{hiddenRecipients.length}
+                              <span className="sr-only"> more: {hiddenRecipients.join(', ')}</span>
+                            </Badge>
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                        {triggers.length > 0 ? (
+                          triggers.map((label) => <Badge key={label}>{label}</Badge>)
+                        ) : (
+                          <span className="text-xs text-fg-faint">No triggers selected</span>
+                        )}
+                      </div>
+                    </>
+                  }
+                  meta={
+                    <div className="space-y-0.5">
+                      {sentCount === 0 && !config.last_sent ? (
+                        <p className="text-fg-subtle">Never sent</p>
+                      ) : (
+                        <>
+                          <p className="tabular-nums text-fg-muted">
+                            {formatNumber(sentCount)} {sentCount === 1 ? 'alert' : 'alerts'} sent
+                          </p>
+                          <p className="text-fg-subtle" title={config.last_sent ? formatDateTime(config.last_sent) : undefined}>
+                            {config.last_sent ? `Last sent ${formatRelative(config.last_sent)}` : 'Not sent yet'}
+                          </p>
+                        </>
+                      )}
+                      <p className="text-fg-subtle">{rateLimitLabel(config.rate_limit_minutes)}</p>
+                    </div>
+                  }
+                  footer={result && <TestResultCallout result={result} onDismiss={() => setTestResult(null)} />}
+                />
+              );
+            })}
+          </ul>
+        )}
+      </Card>
+
+      <Modal
+        open={showForm}
+        onClose={closeForm}
+        size="lg"
+        title={editingConfig ? 'Edit notification' : 'Add notification'}
+        description={
+          editingConfig
+            ? 'Changes apply to the next alert.'
+            : 'Email a list of people when an analysis matches your triggers.'
+        }
+        footer={
+          <>
+            <button type="button" className="btn btn-secondary" onClick={closeForm}>
+              Cancel
+            </button>
+            <button type="submit" form="notification-form" className="btn btn-primary" disabled={saving}>
+              {saving && <Spinner />}
+              {editingConfig ? 'Save changes' : 'Create notification'}
+            </button>
+          </>
+        }
+      >
+        <form id="notification-form" onSubmit={handleSubmit} className="divide-y divide-line">
+          <FormSection title="Details">
+            <div className="grid gap-4">
+              <Field label="Name" htmlFor="notification-name" required>
                 <input
+                  id="notification-name"
                   type="text"
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   className="input"
+                  placeholder="Compliance team alerts"
                   required
                 />
-              </div>
-              <div>
-                <label className="label">Rate Limit (minutes) *</label>
-                <input
-                  type="number"
-                  min="1"
-                  value={formData.rate_limit_minutes || 60}
-                  onChange={(e) => setFormData({ ...formData, rate_limit_minutes: parseInt(e.target.value) || 60 })}
+              </Field>
+              <Field label="Description" htmlFor="notification-description">
+                <textarea
+                  id="notification-description"
+                  value={formData.description || ''}
+                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                   className="input"
-                  required
+                  rows={2}
+                  placeholder="Optional note for your team"
                 />
-                <p className="text-xs text-gray-500 mt-1">Max 1 email per N minutes</p>
-              </div>
+              </Field>
             </div>
+            <Switch
+              className="mt-5"
+              checked={!!formData.is_active}
+              onChange={(checked) => setFormData({ ...formData, is_active: checked })}
+              label="Active"
+              description="Paused notifications keep their settings but send nothing."
+            />
+          </FormSection>
 
-            <div>
-              <label className="label">Description</label>
-              <textarea
-                value={formData.description || ''}
-                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                className="input"
-                rows={2}
-              />
-            </div>
-
-            <div className="border-t pt-4">
-              <h3 className="font-semibold mb-2">Email Recipients *</h3>
-              <div className="flex gap-2 mb-2">
+          <FormSection title="Recipients" description="Everyone listed here gets each alert email.">
+            <Field
+              label="Add email addresses"
+              htmlFor="notification-recipients"
+              help="Separate several addresses with commas, then press Enter or select Add."
+              required
+            >
+              <div className="flex gap-2">
                 <input
+                  id="notification-recipients"
                   type="text"
                   value={emailInput}
                   onChange={(e) => setEmailInput(e.target.value)}
                   className="input flex-1"
-                  placeholder="email@example.com (comma-separated for multiple)"
+                  placeholder="name@company.com, team@company.com"
                   onKeyPress={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault();
@@ -223,271 +556,145 @@ export default function NotificationsPage() {
                     }
                   }}
                 />
-                <button type="button" onClick={addEmail} className="btn-secondary">
+                <button type="button" onClick={addEmail} className="btn btn-secondary">
                   Add
                 </button>
               </div>
-              <div className="flex flex-wrap gap-2">
-                {formData.email_recipients?.map((email, idx) => (
-                  <span
-                    key={idx}
-                    className="px-2 py-1 bg-blue-100 dark:bg-blue-900 rounded text-sm flex items-center gap-2"
-                  >
-                    {email}
-                    <button
-                      type="button"
-                      onClick={() => removeEmail(email)}
-                      className="text-red-600 hover:text-red-800"
-                    >
-                      <X className="h-4 w-4" />
-                    </button>
-                  </span>
+            </Field>
+            {recipients.length > 0 ? (
+              <ul className="mt-3 flex flex-wrap gap-1.5" aria-label="Recipients">
+                {recipients.map((email, idx) => (
+                  <li key={idx} className="min-w-0 max-w-full">
+                    <Badge className="max-w-full gap-1 pr-1">
+                      <span className="truncate">{email}</span>
+                      <button
+                        type="button"
+                        onClick={() => removeEmail(email)}
+                        aria-label={`Remove ${email}`}
+                        title="Remove"
+                        className="grid h-4 w-4 shrink-0 place-items-center rounded-sm text-fg-subtle transition-colors hover:bg-surface-muted hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+                      >
+                        <X className="h-3 w-3" aria-hidden="true" />
+                      </button>
+                    </Badge>
+                  </li>
                 ))}
-              </div>
-            </div>
+              </ul>
+            ) : (
+              <p className="mt-3 text-[13px] text-fg-faint">No recipients added yet.</p>
+            )}
+          </FormSection>
 
-            <div className="border-t pt-4">
-              <h3 className="font-semibold mb-2">Notification Triggers</h3>
-              <div className="space-y-2">
-                <label className="flex items-center">
-                  <input
-                    type="checkbox"
-                    checked={formData.notify_on_critical}
-                    onChange={(e) => setFormData({ ...formData, notify_on_critical: e.target.checked })}
-                    className="mr-2"
-                  />
-                  Notify on Critical Alerts
-                </label>
-                <label className="flex items-center">
-                  <input
-                    type="checkbox"
-                    checked={formData.notify_on_warning}
-                    onChange={(e) => setFormData({ ...formData, notify_on_warning: e.target.checked })}
-                    className="mr-2"
-                  />
-                  Notify on Warning Alerts
-                </label>
-                <label className="flex items-center">
-                  <input
-                    type="checkbox"
-                    checked={formData.notify_on_compliance_low}
-                    onChange={(e) => setFormData({ ...formData, notify_on_compliance_low: e.target.checked })}
-                    className="mr-2"
-                  />
-                  Notify on Low Compliance Score
-                </label>
-                <label className="flex items-center">
-                  <input
-                    type="checkbox"
-                    checked={formData.notify_on_custom_rule}
-                    onChange={(e) => setFormData({ ...formData, notify_on_custom_rule: e.target.checked })}
-                    className="mr-2"
-                  />
-                  Notify on Custom Rule Violations
-                </label>
-              </div>
-              {formData.notify_on_compliance_low && (
-                <div className="mt-4">
-                  <label className="label">Min Compliance Score Threshold</label>
-                  <input
-                    type="number"
-                    min="0"
-                    max="100"
-                    value={formData.min_compliance_score || ''}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        min_compliance_score: e.target.value ? parseFloat(e.target.value) : undefined,
-                      })
-                    }
-                    className="input"
-                    placeholder="70 (default)"
-                  />
-                </div>
-              )}
-            </div>
-
-            <div className="border-t pt-4">
-              <h3 className="font-semibold mb-2">Email Template</h3>
+          <FormSection title="Triggers" description="Send an email when an analysis matches any of these.">
+            <div className="space-y-4">
+              <Switch
+                checked={!!formData.notify_on_critical}
+                onChange={(checked) => setFormData({ ...formData, notify_on_critical: checked })}
+                label="Critical alerts"
+                description="The analysis raised at least one critical alert."
+              />
+              <Switch
+                checked={!!formData.notify_on_warning}
+                onChange={(checked) => setFormData({ ...formData, notify_on_warning: checked })}
+                label="Warnings"
+                description="The analysis raised at least one warning."
+              />
               <div>
-                <label className="label">Email Subject Template</label>
+                <Switch
+                  checked={!!formData.notify_on_compliance_low}
+                  onChange={(checked) => setFormData({ ...formData, notify_on_compliance_low: checked })}
+                  label="Low compliance score"
+                  description="The call scored below your threshold."
+                />
+                {formData.notify_on_compliance_low && (
+                  <Field
+                    label="Score threshold"
+                    htmlFor="notification-min-score"
+                    help={`Calls scoring below this send an email. Leave empty to use ${DEFAULT_MIN_SCORE}.`}
+                    className="mt-3 pl-12"
+                  >
+                    <input
+                      id="notification-min-score"
+                      type="number"
+                      min="0"
+                      max="100"
+                      value={formData.min_compliance_score || ''}
+                      onChange={(e) =>
+                        setFormData({
+                          ...formData,
+                          min_compliance_score: e.target.value ? parseFloat(e.target.value) : undefined,
+                        })
+                      }
+                      className="input w-28 tabular-nums"
+                      placeholder={String(DEFAULT_MIN_SCORE)}
+                    />
+                  </Field>
+                )}
+              </div>
+              <Switch
+                checked={!!formData.notify_on_custom_rule}
+                onChange={(checked) => setFormData({ ...formData, notify_on_custom_rule: checked })}
+                label="Custom rule violations"
+                description="The call matched one of your compliance rules."
+              />
+            </div>
+          </FormSection>
+
+          <FormSection title="Email content" description="Leave these empty to use the default subject and body.">
+            <div className="space-y-4">
+              <Field label="Subject" htmlFor="notification-subject">
                 <input
+                  id="notification-subject"
                   type="text"
                   value={formData.email_subject_template || ''}
                   onChange={(e) => setFormData({ ...formData, email_subject_template: e.target.value })}
                   className="input"
                   placeholder="Compliance Alert - Voice Audit"
                 />
-                <p className="text-xs text-gray-500 mt-1">
-                  Placeholders: {'{{compliance_score}}'}, {'{{timestamp}}'}
-                </p>
-              </div>
-              <div className="mt-4">
-                <label className="label">Email Body Template (HTML)</label>
+              </Field>
+              <Field label="Body (HTML)" htmlFor="notification-body">
                 <textarea
+                  id="notification-body"
                   value={formData.email_body_template || ''}
                   onChange={(e) => setFormData({ ...formData, email_body_template: e.target.value })}
-                  className="input font-mono"
+                  className="input font-mono text-[13px]"
                   rows={8}
-                  placeholder="Leave empty for default template"
+                  placeholder="<p>Compliance score: {{compliance_score}}</p>"
+                  spellCheck={false}
                 />
-                <p className="text-xs text-gray-500 mt-1">
-                  Placeholders: {'{{compliance_score}}'}, {'{{toxicity_score}}'}, {'{{alerts_count}}'}, {'{{timestamp}}'}
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center">
-              <input
-                type="checkbox"
-                id="is_active"
-                checked={formData.is_active}
-                onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
-                className="mr-2"
-              />
-              <label htmlFor="is_active" className="label mb-0">Active</label>
-            </div>
-
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setShowForm(false);
-                  setEditingConfig(null);
-                  resetForm();
-                }}
-                className="btn-secondary"
-              >
-                Cancel
-              </button>
-              <button type="submit" className="btn-primary">
-                {editingConfig ? 'Update' : 'Create'} Configuration
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* Configs List */}
-      {loading ? (
-        <div className="text-center py-8">Loading configurations...</div>
-      ) : configs.length === 0 ? (
-        <div className="card text-center py-8">
-          <p className="text-gray-500">No notification configurations found. Create your first configuration!</p>
-        </div>
-      ) : (
-        <div className="space-y-4">
-          {configs.map((config) => (
-            <div key={config.id} className={`card ${!config.is_active ? 'opacity-60' : ''}`}>
-              <div className="flex justify-between items-start">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Bell className="h-5 w-5 text-orange-600" />
-                    <h3 className="text-lg font-semibold">{config.name}</h3>
-                    {config.is_active ? (
-                      <span className="text-xs bg-green-200 dark:bg-green-800 px-2 py-1 rounded flex items-center gap-1">
-                        <CheckCircle2 className="h-3 w-3" />
-                        Active
-                      </span>
-                    ) : (
-                      <span className="text-xs bg-gray-200 dark:bg-gray-700 px-2 py-1 rounded">Inactive</span>
-                    )}
-                  </div>
-                  {config.description && (
-                    <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">{config.description}</p>
-                  )}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
-                    <div>
-                      <Mail className="h-4 w-4 inline mr-1" />
-                      <span className="text-gray-600 dark:text-gray-400">
-                        {config.email_recipients?.length || 0} Recipient(s)
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-gray-600 dark:text-gray-400">Rate Limit:</span>{' '}
-                      <span className="font-semibold">{config.rate_limit_minutes} min</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-600 dark:text-gray-400">Sent:</span>{' '}
-                      <span className="font-semibold">{config.sent_count || 0} times</span>
-                    </div>
-                    {config.last_sent && (
-                      <div>
-                        <span className="text-gray-600 dark:text-gray-400">Last Sent:</span>{' '}
-                        <span className="font-semibold">{new Date(config.last_sent).toLocaleString()}</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => handleTest(config)}
-                    className="p-2 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded"
-                    title="Test"
-                  >
-                    <Play className="h-4 w-4" />
-                  </button>
-                  <button
-                    onClick={() => handleEdit(config)}
-                    className="p-2 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded"
-                    title="Edit"
-                  >
-                    <Edit2 className="h-4 w-4" />
-                  </button>
-                  <button
-                    onClick={() => handleDelete(config.id!)}
-                    className="p-2 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded"
-                    title="Delete"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
+              </Field>
+              <div>
+                <p className="text-xs font-medium text-fg-muted">Placeholders for the subject and body</p>
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {EMAIL_PLACEHOLDERS.map((name) => (
+                    <code key={name} className="code-chip">{`{{${name}}}`}</code>
+                  ))}
                 </div>
               </div>
             </div>
-          ))}
-        </div>
-      )}
+          </FormSection>
 
-      {/* Test Result Modal */}
-      {testResult && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="card max-w-2xl w-full m-4">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-semibold">Test Result: {testResult.config.name}</h2>
-              <button
-                onClick={() => setTestResult(null)}
-                className="text-gray-500 hover:text-gray-700"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <div className={`p-4 rounded-lg ${testResult.result.success ? 'bg-green-50 dark:bg-green-900/20' : 'bg-red-50 dark:bg-red-900/20'}`}>
-              <div className="flex items-center gap-2 mb-2">
-                {testResult.result.success ? (
-                  <>
-                    <CheckCircle2 className="h-5 w-5 text-green-600" />
-                    <span className="font-semibold">Email Sent Successfully</span>
-                  </>
-                ) : (
-                  <>
-                    <X className="h-5 w-5 text-red-600" />
-                    <span className="font-semibold">Failed to Send Email</span>
-                  </>
-                )}
+          <FormSection
+            title="Rate limit"
+            description="Alerts that arrive before the window has passed are skipped, so a burst of calls sends one email."
+          >
+            <Field label="Minimum time between emails" htmlFor="notification-rate-limit" required>
+              <div className="flex items-center gap-2">
+                <input
+                  id="notification-rate-limit"
+                  type="number"
+                  min="1"
+                  value={formData.rate_limit_minutes || 60}
+                  onChange={(e) => setFormData({ ...formData, rate_limit_minutes: parseInt(e.target.value) || 60 })}
+                  className="input w-28 tabular-nums"
+                  required
+                />
+                <span className="text-sm text-fg-subtle">minutes</span>
               </div>
-              {testResult.result.success && testResult.result.recipients && (
-                <p className="text-sm">
-                  Sent to: {testResult.result.recipients.join(', ')}
-                </p>
-              )}
-              {testResult.result.error && (
-                <p className="text-sm text-red-600">{testResult.result.error}</p>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+            </Field>
+          </FormSection>
+        </form>
+      </Modal>
     </div>
   );
 }
-

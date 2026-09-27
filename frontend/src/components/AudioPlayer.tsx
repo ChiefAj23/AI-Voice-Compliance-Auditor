@@ -1,5 +1,9 @@
-import { useState, useRef, useEffect } from 'react';
-import { Play, Pause, Volume2, VolumeX, SkipBack, SkipForward } from 'lucide-react';
+import { useState, useRef, useEffect, useMemo } from 'react';
+import { Pause, Play, SkipBack, SkipForward, Volume2, VolumeX } from 'lucide-react';
+import clsx from 'clsx';
+import { formatDuration, tidyLabel } from '../utils/format';
+import { useChartTheme } from '../utils/chart';
+import { Card, CardHeader, IconButton } from './ui';
 
 interface AudioPlayerProps {
   audioUrl: string | File;
@@ -20,12 +24,24 @@ export default function AudioPlayer({
   onTimeUpdate
 }: AudioPlayerProps) {
   const audioRef = useRef<HTMLAudioElement>(null);
+  const listRef = useRef<HTMLOListElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(1);
   const [isMuted, setIsMuted] = useState(false);
   const [highlightedSegment, setHighlightedSegment] = useState<number | null>(null);
+  const { series } = useChartTheme();
+
+  // Speakers keep a fixed color slot in order of first appearance.
+  const speakers = useMemo(
+    () => Array.from(new Set(segments.map((seg) => seg.speaker).filter((s): s is string => Boolean(s)))),
+    [segments],
+  );
+  const speakerColor = (speaker?: string) => {
+    const index = speaker ? speakers.indexOf(speaker) : -1;
+    return index >= 0 && index < series.length ? series[index] : undefined;
+  };
 
   // Create object URL if File
   const [audioSrc, setAudioSrc] = useState<string>('');
@@ -60,12 +76,21 @@ export default function AudioPlayer({
       setDuration(audio.duration);
     };
 
+    const onPlay = () => setIsPlaying(true);
+    const onPause = () => setIsPlaying(false);
+
     audio.addEventListener('timeupdate', updateTime);
     audio.addEventListener('loadedmetadata', updateDuration);
+    audio.addEventListener('play', onPlay);
+    audio.addEventListener('pause', onPause);
+    audio.addEventListener('ended', onPause);
 
     return () => {
       audio.removeEventListener('timeupdate', updateTime);
       audio.removeEventListener('loadedmetadata', updateDuration);
+      audio.removeEventListener('play', onPlay);
+      audio.removeEventListener('pause', onPause);
+      audio.removeEventListener('ended', onPause);
     };
   }, [segments, onTimeUpdate]);
 
@@ -76,6 +101,18 @@ export default function AudioPlayer({
     }
   }, [externalTime]);
 
+  // Keep the active line visible while playing, scrolling only the transcript list.
+  useEffect(() => {
+    const list = listRef.current;
+    if (!isPlaying || !list || highlightedSegment === null) return;
+    const row = list.children[highlightedSegment] as HTMLElement | undefined;
+    if (!row) return;
+    const top = row.offsetTop;
+    if (top < list.scrollTop || top + row.offsetHeight > list.scrollTop + list.clientHeight) {
+      list.scrollTo({ top: Math.max(0, top - 8), behavior: 'smooth' });
+    }
+  }, [highlightedSegment, isPlaying]);
+
   const togglePlay = () => {
     const audio = audioRef.current;
     if (!audio) return;
@@ -83,7 +120,7 @@ export default function AudioPlayer({
     if (isPlaying) {
       audio.pause();
     } else {
-      audio.play();
+      audio.play().catch(() => setIsPlaying(false));
     }
     setIsPlaying(!isPlaying);
   };
@@ -127,12 +164,6 @@ export default function AudioPlayer({
     audio.currentTime = Math.max(0, Math.min(duration, audio.currentTime + seconds));
   };
 
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
-
   const jumpToSegment = (index: number) => {
     const audio = audioRef.current;
     if (!audio || !segments[index]) return;
@@ -142,127 +173,99 @@ export default function AudioPlayer({
   };
 
   return (
-    <div className="card">
-      <audio ref={audioRef} src={audioSrc} />
+    <Card>
+      <CardHeader title="Recording" description="Select a line in the transcript to jump to that moment." />
+      <audio ref={audioRef} src={audioSrc} preload="metadata" />
 
-      {/* Player Controls */}
-      <div className="space-y-4">
-        {/* Progress Bar */}
-        <div>
+      {/* Player controls */}
+      <div className="flex items-center gap-2 border-b border-line px-5 py-4 sm:gap-3">
+        <IconButton icon={SkipBack} label="Back 10 seconds" onClick={() => skip(-10)} />
+        <button
+          type="button"
+          onClick={togglePlay}
+          aria-label={isPlaying ? 'Pause' : 'Play'}
+          className="btn btn-primary h-10 w-10 shrink-0 rounded-full px-0"
+        >
+          {isPlaying ? <Pause /> : <Play className="translate-x-px" />}
+        </button>
+        <IconButton icon={SkipForward} label="Forward 10 seconds" onClick={() => skip(10)} />
+
+        <span className="w-10 shrink-0 text-right text-xs tabular-nums text-fg-muted">{formatDuration(currentTime)}</span>
+        <input
+          type="range"
+          min="0"
+          max={duration || 0}
+          step="0.1"
+          value={currentTime}
+          onChange={handleSeek}
+          aria-label="Seek"
+          className="h-1.5 min-w-0 flex-1 cursor-pointer accent-accent"
+        />
+        <span className="w-10 shrink-0 text-xs tabular-nums text-fg-subtle">{formatDuration(duration)}</span>
+
+        <div className="hidden items-center gap-1 sm:flex">
+          <IconButton icon={isMuted ? VolumeX : Volume2} label={isMuted ? 'Unmute' : 'Mute'} onClick={toggleMute} />
           <input
             type="range"
             min="0"
-            max={duration || 0}
-            value={currentTime}
-            onChange={handleSeek}
-            className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer accent-primary-600"
+            max="1"
+            step="0.01"
+            value={isMuted ? 0 : volume}
+            onChange={handleVolumeChange}
+            aria-label="Volume"
+            className="h-1.5 w-20 cursor-pointer accent-accent"
           />
-          <div className="flex justify-between text-sm text-gray-600 dark:text-gray-400 mt-1">
-            <span>{formatTime(currentTime)}</span>
-            <span>{formatTime(duration)}</span>
-          </div>
-        </div>
-
-        {/* Control Buttons */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-2">
-            <button
-              onClick={() => skip(-10)}
-              className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-              title="Rewind 10s"
-            >
-              <SkipBack className="h-5 w-5 text-gray-600 dark:text-gray-400" />
-            </button>
-            <button
-              onClick={togglePlay}
-              className="p-3 rounded-full bg-primary-600 text-white hover:bg-primary-700 transition-colors"
-            >
-              {isPlaying ? (
-                <Pause className="h-6 w-6" />
-              ) : (
-                <Play className="h-6 w-6 ml-1" />
-              )}
-            </button>
-            <button
-              onClick={() => skip(10)}
-              className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-              title="Forward 10s"
-            >
-              <SkipForward className="h-5 w-5 text-gray-600 dark:text-gray-400" />
-            </button>
-          </div>
-
-          {/* Volume Control */}
-          <div className="flex items-center space-x-2">
-            <button
-              onClick={toggleMute}
-              className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-            >
-              {isMuted ? (
-                <VolumeX className="h-5 w-5 text-gray-600 dark:text-gray-400" />
-              ) : (
-                <Volume2 className="h-5 w-5 text-gray-600 dark:text-gray-400" />
-              )}
-            </button>
-            <input
-              type="range"
-              min="0"
-              max="1"
-              step="0.01"
-              value={isMuted ? 0 : volume}
-              onChange={handleVolumeChange}
-              className="w-24 h-2 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer accent-primary-600"
-            />
-          </div>
         </div>
       </div>
 
-      {/* Transcript with Highlights */}
+      {/* Synchronized transcript */}
       {segments.length > 0 && (
-        <div className="mt-6">
-          <h3 className="text-lg font-semibold mb-4 dark:text-white">Synchronized Transcript</h3>
-          <div className="max-h-96 overflow-y-auto bg-gray-50 dark:bg-gray-800 rounded-lg p-4 space-y-2">
-            {segments.map((segment, index) => {
-              const isHighlighted = highlightedSegment === index;
-              const isPast = currentTime > segment.end;
-              const isCurrent = currentTime >= segment.start && currentTime <= segment.end;
+        <ol ref={listRef} className="relative max-h-[28rem] divide-y divide-line overflow-y-auto">
+          {segments.map((segment, index) => {
+            const isCurrent = currentTime >= segment.start && currentTime <= segment.end;
+            const isPast = currentTime > segment.end;
+            const color = speakerColor(segment.speaker);
 
-              return (
-                <div
-                  key={index}
+            return (
+              <li key={index}>
+                <button
+                  type="button"
                   onClick={() => jumpToSegment(index)}
-                  className={`
-                    p-3 rounded-lg cursor-pointer transition-all
-                    ${isCurrent
-                      ? 'bg-primary-100 dark:bg-primary-900/30 border-2 border-primary-500 dark:border-primary-400'
-                      : isPast
-                      ? 'bg-gray-100 dark:bg-gray-700 opacity-75'
-                      : 'bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600'
-                    }
-                  `}
-                >
-                  {segment.speaker && (
-                    <span className="text-xs font-semibold text-primary-600 dark:text-primary-400 mb-1 block">
-                      {segment.speaker}
-                    </span>
+                  aria-current={isCurrent ? 'true' : undefined}
+                  className={clsx(
+                    'flex w-full gap-4 px-5 py-3 text-left transition-colors',
+                    isCurrent ? 'bg-accent-subtle/70' : 'hover:bg-surface-subtle',
                   )}
-                  <span className={`text-sm ${
-                    isCurrent
-                      ? 'text-primary-900 dark:text-primary-100 font-medium'
-                      : 'text-gray-700 dark:text-gray-300'
-                  }`}>
-                    {segment.text}
+                >
+                  <span className="w-10 shrink-0 pt-0.5 text-xs tabular-nums text-fg-subtle">
+                    {formatDuration(segment.start)}
                   </span>
-                  <span className="text-xs text-gray-500 dark:text-gray-400 ml-2">
-                    [{Math.floor(segment.start)}s - {Math.floor(segment.end)}s]
+                  <span className="min-w-0 flex-1">
+                    {segment.speaker && (
+                      <span className="mb-0.5 flex items-center gap-1.5 text-xs font-medium text-fg-muted">
+                        <span
+                          className="h-2 w-2 shrink-0 rounded-full bg-fg-faint"
+                          style={color ? { backgroundColor: color } : undefined}
+                          aria-hidden="true"
+                        />
+                        {tidyLabel(segment.speaker)}
+                      </span>
+                    )}
+                    <span
+                      className={clsx(
+                        'block text-sm leading-6',
+                        isCurrent ? 'text-fg' : isPast ? 'text-fg-subtle' : 'text-fg-muted',
+                      )}
+                    >
+                      {segment.text}
+                    </span>
                   </span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
+                </button>
+              </li>
+            );
+          })}
+        </ol>
       )}
-    </div>
+    </Card>
   );
 }
-

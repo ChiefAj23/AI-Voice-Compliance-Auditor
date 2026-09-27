@@ -1,10 +1,15 @@
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { Area, AreaChart, CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import ChartTooltip from './charts/ChartTooltip';
+import { useChartTheme } from '../utils/chart';
+import { formatDuration, humanize } from '../utils/format';
+import { Card, CardBody, CardHeader } from './ui';
 
 interface SentimentTimelineProps {
   timeline: any;
 }
 
 export default function SentimentTimeline({ timeline }: SentimentTimelineProps) {
+  const t = useChartTheme();
   const timelineData = timeline.timeline || [];
   const overallMetrics = timeline.overall_metrics || {};
 
@@ -15,116 +20,102 @@ export default function SentimentTimeline({ timeline }: SentimentTimelineProps) 
     segment: seg.segment_id,
   }));
 
+  const metrics = [
+    { label: 'Segments', value: overallMetrics.total_segments || 0 },
+    { label: 'Average sentiment', value: (overallMetrics.average_sentiment_score || 0).toFixed(2) },
+    { label: 'Trend', value: humanize(overallMetrics.sentiment_trend || 'stable') },
+    {
+      label: 'Compliance range',
+      value: `${overallMetrics.compliance_range?.min?.toFixed(0) || 0}–${overallMetrics.compliance_range?.max?.toFixed(0) || 100}`,
+    },
+  ];
+
+  const timeAxis = {
+    dataKey: 'time',
+    type: 'number' as const,
+    domain: ['dataMin', 'dataMax'] as [string, string],
+    tickFormatter: (value: number) => formatDuration(value),
+    ...t.axis,
+  };
+  const labelFormatter = (value: string | number) => `At ${formatDuration(Number(value))}`;
+
   return (
-    <div className="card">
-      <h2 className="text-xl font-semibold mb-6 dark:text-white">📈 Sentiment Timeline</h2>
+    <Card>
+      <CardHeader
+        title="Sentiment and compliance over the call"
+        description="Scores for each transcript segment, plotted against call time."
+      />
+      <CardBody className="space-y-8">
+        <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {metrics.map((metric) => (
+            <div key={metric.label} className="rounded-lg bg-surface-subtle px-4 py-3">
+              <dt className="kpi-label">{metric.label}</dt>
+              <dd className="mt-1 text-lg font-semibold text-fg">{metric.value}</dd>
+            </div>
+          ))}
+        </dl>
 
-      {/* Metrics */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-        <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4">
-          <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Total Segments</p>
-          <p className="text-2xl font-bold text-gray-900 dark:text-white">
-            {overallMetrics.total_segments || 0}
-          </p>
-        </div>
-        <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4">
-          <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Avg Sentiment</p>
-          <p className="text-2xl font-bold text-gray-900 dark:text-white">
-            {(overallMetrics.average_sentiment_score || 0).toFixed(2)}
-          </p>
-        </div>
-        <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4">
-          <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Trend</p>
-          <p className="text-2xl font-bold text-gray-900 dark:text-white capitalize">
-            {overallMetrics.sentiment_trend || 'stable'}
-          </p>
-        </div>
-        <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4">
-          <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Compliance Range</p>
-          <p className="text-2xl font-bold text-gray-900 dark:text-white">
-            {overallMetrics.compliance_range?.min?.toFixed(0) || 0}-
-            {overallMetrics.compliance_range?.max?.toFixed(0) || 100}
-          </p>
-        </div>
-      </div>
-
-      {/* Charts */}
-      <div className="space-y-6">
-        {/* Compliance Score Over Time */}
         <div>
-          <h3 className="text-lg font-semibold mb-4 dark:text-white">Compliance Score Over Time</h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-              <XAxis
-                dataKey="time"
-                label={{ value: 'Time (seconds)', position: 'insideBottom', offset: -5 }}
-                stroke="#6b7280"
-              />
-              <YAxis
-                label={{ value: 'Compliance Score', angle: -90, position: 'insideLeft' }}
-                domain={[0, 100]}
-                stroke="#6b7280"
-              />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: 'rgba(255, 255, 255, 0.9)',
-                  border: '1px solid #e5e7eb',
-                  borderRadius: '8px'
-                }}
-              />
-              <Legend />
-              <Line
-                type="monotone"
-                dataKey="compliance"
-                stroke="#3b82f6"
-                strokeWidth={2}
-                fill="#3b82f6"
-                fillOpacity={0.1}
-                name="Compliance Score"
-              />
-            </LineChart>
-          </ResponsiveContainer>
+          <h3 className="section-title">Compliance score</h3>
+          <div className="mt-3 h-56">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
+                <CartesianGrid {...t.grid} />
+                <XAxis {...timeAxis} />
+                <YAxis domain={[0, 100]} ticks={[0, 25, 50, 75, 100]} width={40} {...t.axis} />
+                <ReferenceLine
+                  y={70}
+                  stroke={t.colors.axis}
+                  strokeDasharray="4 4"
+                  label={{ value: 'Review threshold', position: 'insideBottomRight', fill: t.tick, fontSize: 11 }}
+                />
+                <Tooltip
+                  content={<ChartTooltip labelFormatter={labelFormatter} valueFormatter={(v) => v.toFixed(1)} />}
+                  cursor={t.cursor}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="compliance"
+                  name="Compliance"
+                  stroke={t.series[0]}
+                  strokeWidth={2}
+                  fill={t.series[0]}
+                  fillOpacity={0.1}
+                  activeDot={{ r: 4, stroke: t.surface, strokeWidth: 2 }}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
         </div>
 
-        {/* Sentiment Score Over Time */}
         <div>
-          <h3 className="text-lg font-semibold mb-4 dark:text-white">Sentiment Score Over Time</h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-              <XAxis
-                dataKey="time"
-                label={{ value: 'Time (seconds)', position: 'insideBottom', offset: -5 }}
-                stroke="#6b7280"
-              />
-              <YAxis
-                label={{ value: 'Sentiment Score', angle: -90, position: 'insideLeft' }}
-                domain={[-1, 1]}
-                stroke="#6b7280"
-              />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: 'rgba(255, 255, 255, 0.9)',
-                  border: '1px solid #e5e7eb',
-                  borderRadius: '8px'
-                }}
-              />
-              <Legend />
-              <Line
-                type="monotone"
-                dataKey="sentiment"
-                stroke="#10b981"
-                strokeWidth={2}
-                fill="#10b981"
-                fillOpacity={0.1}
-                name="Sentiment Score"
-              />
-            </LineChart>
-          </ResponsiveContainer>
+          <h3 className="section-title">Sentiment score</h3>
+          <p className="mt-0.5 text-xs text-fg-subtle">From −1 (negative) to 1 (positive).</p>
+          <div className="mt-3 h-48">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
+                <CartesianGrid {...t.grid} />
+                <XAxis {...timeAxis} />
+                <YAxis domain={[-1, 1]} ticks={[-1, -0.5, 0, 0.5, 1]} width={40} {...t.axis} />
+                <ReferenceLine y={0} stroke={t.colors.axis} />
+                <Tooltip
+                  content={<ChartTooltip labelFormatter={labelFormatter} valueFormatter={(v) => v.toFixed(2)} />}
+                  cursor={t.cursor}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="sentiment"
+                  name="Sentiment"
+                  stroke={t.series[0]}
+                  strokeWidth={2}
+                  dot={false}
+                  activeDot={{ r: 4, stroke: t.surface, strokeWidth: 2 }}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
         </div>
-      </div>
-    </div>
+      </CardBody>
+    </Card>
   );
 }
-
