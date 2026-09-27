@@ -38,7 +38,8 @@ from .email_notification import get_email_service
 from .auth import (
     authenticate_user, create_access_token, get_current_user, get_current_active_user,
     get_password_hash, get_user_permissions, require_permission, require_role,
-    init_default_roles_and_permissions, ACCESS_TOKEN_EXPIRE_MINUTES, get_optional_user
+    init_default_roles_and_permissions, ACCESS_TOKEN_EXPIRE_MINUTES, get_optional_user,
+    ensure_admin_user
 )
 from .database import (
     User, Role, Permission, Comment, Tag, Team,
@@ -89,25 +90,8 @@ async def startup_event():
     try:
         init_default_roles_and_permissions(db)
 
-        # Create default admin user if it doesn't exist
-        admin_user = db.query(User).filter(User.username == "admin").first()
-        if not admin_user:
-            from .auth import get_password_hash
-            admin_user = User(
-                username="admin",
-                email="admin@example.com",
-                hashed_password=get_password_hash("admin123"),  # Change this in production!
-                full_name="Administrator",
-                is_active=True,
-                is_superuser=True
-            )
-            db.add(admin_user)
-            # Assign admin role
-            admin_role = db.query(Role).filter(Role.name == "admin").first()
-            if admin_role:
-                admin_user.roles.append(admin_role)
-            db.commit()
-            print("Default admin user created: username='admin', password='admin123'")
+        # The first admin account: ADMIN_PASSWORD, or a generated password printed once.
+        ensure_admin_user(db)
 
         # Initialize scheduler and load all active schedules
         scheduler = get_scheduler()
@@ -124,7 +108,7 @@ async def shutdown_event():
     scheduler = get_scheduler()
     scheduler.shutdown()
 
-@app.post("/analyze_audio")
+@app.post("/analyze_audio", dependencies=[Depends(require_permission("analysis:write"))])
 async def analyze_audio(
     file: UploadFile=File(...),
     db: Session = Depends(get_db),
@@ -356,7 +340,7 @@ async def get_supported_languages_endpoint():
         raise HTTPException(status_code=500, detail=f"Failed to get supported languages: {str(e)}")
 
 
-@app.post("/analyze_batch")
+@app.post("/analyze_batch", dependencies=[Depends(require_permission("analysis:write"))])
 async def analyze_batch(files: List[UploadFile] = File(...), db: Session = Depends(get_db)):
     """Process multiple audio files in batch"""
     if not files or len(files) == 0:
@@ -431,7 +415,7 @@ async def analyze_batch(files: List[UploadFile] = File(...), db: Session = Depen
     }
 
 
-@app.post("/generate_report")
+@app.post("/generate_report", dependencies=[Depends(require_permission("analysis:read"))])
 async def generate_report(request: Request):
     try:
         data = await request.json()
@@ -457,7 +441,7 @@ async def generate_report(request: Request):
         raise HTTPException(status_code=500, detail=f"Failed to generate PDF: {str(e)}")
 
 
-@app.get("/history")
+@app.get("/history", dependencies=[Depends(require_permission("analysis:read"))])
 async def get_history(
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
@@ -510,7 +494,7 @@ async def get_history(
         raise HTTPException(status_code=500, detail=f"Failed to retrieve history: {str(e)}")
 
 
-@app.get("/history/{record_id}")
+@app.get("/history/{record_id}", dependencies=[Depends(require_permission("analysis:read"))])
 async def get_record(record_id: int, db: Session = Depends(get_db)):
     """Get a specific analysis record by ID"""
     try:
@@ -524,7 +508,7 @@ async def get_record(record_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Failed to retrieve record: {str(e)}")
 
 
-@app.delete("/history/{record_id}")
+@app.delete("/history/{record_id}", dependencies=[Depends(require_permission("analysis:delete"))])
 async def delete_record(record_id: int, db: Session = Depends(get_db)):
     """Delete a specific analysis record"""
     try:
@@ -541,7 +525,7 @@ async def delete_record(record_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Failed to delete record: {str(e)}")
 
 
-@app.get("/statistics")
+@app.get("/statistics", dependencies=[Depends(require_permission("analysis:read"))])
 async def get_statistics(
     days: int = Query(30, ge=1, le=365),
     db: Session = Depends(get_db)
@@ -620,7 +604,7 @@ async def get_statistics(
         raise HTTPException(status_code=500, detail=f"Failed to retrieve statistics: {str(e)}")
 
 
-@app.get("/export/json/{record_id}")
+@app.get("/export/json/{record_id}", dependencies=[Depends(require_permission("analysis:read"))])
 async def export_json(record_id: int, db: Session = Depends(get_db)):
     """Export a specific analysis record as JSON"""
     try:
@@ -639,7 +623,7 @@ async def export_json(record_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Failed to export JSON: {str(e)}")
 
 
-@app.get("/export/csv")
+@app.get("/export/csv", dependencies=[Depends(require_permission("analysis:read"))])
 async def export_csv(
     min_score: Optional[float] = Query(None, ge=0, le=100),
     max_score: Optional[float] = Query(None, ge=0, le=100),
@@ -715,7 +699,7 @@ async def export_csv(
         raise HTTPException(status_code=500, detail=f"Failed to export CSV: {str(e)}")
 
 
-@app.get("/export/json/all")
+@app.get("/export/json/all", dependencies=[Depends(require_permission("analysis:read"))])
 async def export_json_all(
     min_score: Optional[float] = Query(None, ge=0, le=100),
     max_score: Optional[float] = Query(None, ge=0, le=100),
@@ -763,7 +747,7 @@ async def export_json_all(
         raise HTTPException(status_code=500, detail=f"Failed to export JSON: {str(e)}")
 
 
-@app.post("/compare")
+@app.post("/compare", dependencies=[Depends(require_permission("analysis:read"))])
 async def compare_analyses(request: Request, db: Session = Depends(get_db)):
     """Compare two or more analysis records"""
     try:
@@ -875,7 +859,7 @@ class ComplianceRuleUpdate(BaseModel):
 
 
 # Compliance Rules API Endpoints
-@app.get("/compliance_rules")
+@app.get("/compliance_rules", dependencies=[Depends(require_permission("compliance:read"))])
 async def get_compliance_rules(
     category: Opt[str] = None,
     is_active: Opt[bool] = None,
@@ -896,7 +880,7 @@ async def get_compliance_rules(
         raise HTTPException(status_code=500, detail=f"Failed to get compliance rules: {str(e)}")
 
 
-@app.get("/compliance_rules/{rule_id}")
+@app.get("/compliance_rules/{rule_id}", dependencies=[Depends(require_permission("compliance:read"))])
 async def get_compliance_rule(rule_id: int, db: Session = Depends(get_db)):
     """Get a specific compliance rule by ID"""
     try:
@@ -910,7 +894,7 @@ async def get_compliance_rule(rule_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Failed to get compliance rule: {str(e)}")
 
 
-@app.post("/compliance_rules")
+@app.post("/compliance_rules", dependencies=[Depends(require_permission("compliance:write"))])
 async def create_compliance_rule(rule_data: ComplianceRuleCreate, db: Session = Depends(get_db)):
     """Create a new compliance rule"""
     try:
@@ -952,7 +936,7 @@ async def create_compliance_rule(rule_data: ComplianceRuleCreate, db: Session = 
         raise HTTPException(status_code=500, detail=f"Failed to create compliance rule: {str(e)}")
 
 
-@app.put("/compliance_rules/{rule_id}")
+@app.put("/compliance_rules/{rule_id}", dependencies=[Depends(require_permission("compliance:write"))])
 async def update_compliance_rule(rule_id: int, rule_data: ComplianceRuleUpdate, db: Session = Depends(get_db)):
     """Update an existing compliance rule"""
     try:
@@ -979,7 +963,7 @@ async def update_compliance_rule(rule_id: int, rule_data: ComplianceRuleUpdate, 
         raise HTTPException(status_code=500, detail=f"Failed to update compliance rule: {str(e)}")
 
 
-@app.delete("/compliance_rules/{rule_id}")
+@app.delete("/compliance_rules/{rule_id}", dependencies=[Depends(require_permission("compliance:delete"))])
 async def delete_compliance_rule(rule_id: int, db: Session = Depends(get_db)):
     """Delete a compliance rule"""
     try:
@@ -998,7 +982,7 @@ async def delete_compliance_rule(rule_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Failed to delete compliance rule: {str(e)}")
 
 
-@app.post("/compliance_rules/{rule_id}/test")
+@app.post("/compliance_rules/{rule_id}/test", dependencies=[Depends(require_permission("compliance:write"))])
 async def test_compliance_rule(
     rule_id: int,
     text: str = Query(..., description="Text to test the rule against"),
@@ -1057,7 +1041,7 @@ class ScheduledReportUpdate(BaseModel):
 
 
 # Scheduled Reports API Endpoints
-@app.get("/scheduled_reports")
+@app.get("/scheduled_reports", dependencies=[Depends(require_permission("admin:all"))])
 async def get_scheduled_reports(
     is_active: Opt[bool] = None,
     db: Session = Depends(get_db)
@@ -1073,7 +1057,7 @@ async def get_scheduled_reports(
         raise HTTPException(status_code=500, detail=f"Failed to get scheduled reports: {str(e)}")
 
 
-@app.get("/scheduled_reports/{report_id}")
+@app.get("/scheduled_reports/{report_id}", dependencies=[Depends(require_permission("admin:all"))])
 async def get_scheduled_report(report_id: int, db: Session = Depends(get_db)):
     """Get a specific scheduled report by ID"""
     try:
@@ -1087,7 +1071,7 @@ async def get_scheduled_report(report_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Failed to get scheduled report: {str(e)}")
 
 
-@app.post("/scheduled_reports")
+@app.post("/scheduled_reports", dependencies=[Depends(require_permission("admin:all"))])
 async def create_scheduled_report(report_data: ScheduledReportCreate, db: Session = Depends(get_db)):
     """Create a new scheduled report"""
     try:
@@ -1135,7 +1119,7 @@ async def create_scheduled_report(report_data: ScheduledReportCreate, db: Sessio
         raise HTTPException(status_code=500, detail=f"Failed to create scheduled report: {str(e)}")
 
 
-@app.put("/scheduled_reports/{report_id}")
+@app.put("/scheduled_reports/{report_id}", dependencies=[Depends(require_permission("admin:all"))])
 async def update_scheduled_report(
     report_id: int,
     report_data: ScheduledReportUpdate,
@@ -1172,7 +1156,7 @@ async def update_scheduled_report(
         raise HTTPException(status_code=500, detail=f"Failed to update scheduled report: {str(e)}")
 
 
-@app.delete("/scheduled_reports/{report_id}")
+@app.delete("/scheduled_reports/{report_id}", dependencies=[Depends(require_permission("admin:all"))])
 async def delete_scheduled_report(report_id: int, db: Session = Depends(get_db)):
     """Delete a scheduled report"""
     try:
@@ -1195,7 +1179,7 @@ async def delete_scheduled_report(report_id: int, db: Session = Depends(get_db))
         raise HTTPException(status_code=500, detail=f"Failed to delete scheduled report: {str(e)}")
 
 
-@app.post("/scheduled_reports/{report_id}/run_now")
+@app.post("/scheduled_reports/{report_id}/run_now", dependencies=[Depends(require_permission("admin:all"))])
 async def run_scheduled_report_now(report_id: int, db: Session = Depends(get_db)):
     """Manually trigger a scheduled report to run immediately"""
     try:
@@ -1255,7 +1239,7 @@ class WebhookUpdate(BaseModel):
 
 
 # Webhook API Endpoints
-@app.get("/webhooks")
+@app.get("/webhooks", dependencies=[Depends(require_permission("admin:all"))])
 async def get_webhooks(
     is_active: Opt[bool] = None,
     db: Session = Depends(get_db)
@@ -1271,7 +1255,7 @@ async def get_webhooks(
         raise HTTPException(status_code=500, detail=f"Failed to get webhooks: {str(e)}")
 
 
-@app.get("/webhooks/{webhook_id}")
+@app.get("/webhooks/{webhook_id}", dependencies=[Depends(require_permission("admin:all"))])
 async def get_webhook(webhook_id: int, db: Session = Depends(get_db)):
     """Get a specific webhook by ID"""
     try:
@@ -1285,7 +1269,7 @@ async def get_webhook(webhook_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Failed to get webhook: {str(e)}")
 
 
-@app.post("/webhooks")
+@app.post("/webhooks", dependencies=[Depends(require_permission("admin:all"))])
 async def create_webhook(webhook_data: WebhookCreate, db: Session = Depends(get_db)):
     """Create a new webhook"""
     try:
@@ -1332,7 +1316,7 @@ async def create_webhook(webhook_data: WebhookCreate, db: Session = Depends(get_
         raise HTTPException(status_code=500, detail=f"Failed to create webhook: {str(e)}")
 
 
-@app.put("/webhooks/{webhook_id}")
+@app.put("/webhooks/{webhook_id}", dependencies=[Depends(require_permission("admin:all"))])
 async def update_webhook(
     webhook_id: int,
     webhook_data: WebhookUpdate,
@@ -1361,7 +1345,7 @@ async def update_webhook(
         raise HTTPException(status_code=500, detail=f"Failed to update webhook: {str(e)}")
 
 
-@app.delete("/webhooks/{webhook_id}")
+@app.delete("/webhooks/{webhook_id}", dependencies=[Depends(require_permission("admin:all"))])
 async def delete_webhook(webhook_id: int, db: Session = Depends(get_db)):
     """Delete a webhook"""
     try:
@@ -1380,7 +1364,7 @@ async def delete_webhook(webhook_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Failed to delete webhook: {str(e)}")
 
 
-@app.post("/webhooks/{webhook_id}/test")
+@app.post("/webhooks/{webhook_id}/test", dependencies=[Depends(require_permission("admin:all"))])
 async def test_webhook(webhook_id: int, db: Session = Depends(get_db)):
     """Test a webhook with sample data"""
     try:
@@ -1431,7 +1415,7 @@ class NotificationConfigUpdate(BaseModel):
 
 
 # Notification Config API Endpoints
-@app.get("/notification_configs")
+@app.get("/notification_configs", dependencies=[Depends(require_permission("admin:all"))])
 async def get_notification_configs(
     is_active: Opt[bool] = None,
     db: Session = Depends(get_db)
@@ -1447,7 +1431,7 @@ async def get_notification_configs(
         raise HTTPException(status_code=500, detail=f"Failed to get notification configs: {str(e)}")
 
 
-@app.get("/notification_configs/{config_id}")
+@app.get("/notification_configs/{config_id}", dependencies=[Depends(require_permission("admin:all"))])
 async def get_notification_config(config_id: int, db: Session = Depends(get_db)):
     """Get a specific notification config by ID"""
     try:
@@ -1461,7 +1445,7 @@ async def get_notification_config(config_id: int, db: Session = Depends(get_db))
         raise HTTPException(status_code=500, detail=f"Failed to get notification config: {str(e)}")
 
 
-@app.post("/notification_configs")
+@app.post("/notification_configs", dependencies=[Depends(require_permission("admin:all"))])
 async def create_notification_config(
     config_data: NotificationConfigCreate,
     db: Session = Depends(get_db)
@@ -1499,7 +1483,7 @@ async def create_notification_config(
         raise HTTPException(status_code=500, detail=f"Failed to create notification config: {str(e)}")
 
 
-@app.put("/notification_configs/{config_id}")
+@app.put("/notification_configs/{config_id}", dependencies=[Depends(require_permission("admin:all"))])
 async def update_notification_config(
     config_id: int,
     config_data: NotificationConfigUpdate,
@@ -1528,7 +1512,7 @@ async def update_notification_config(
         raise HTTPException(status_code=500, detail=f"Failed to update notification config: {str(e)}")
 
 
-@app.delete("/notification_configs/{config_id}")
+@app.delete("/notification_configs/{config_id}", dependencies=[Depends(require_permission("admin:all"))])
 async def delete_notification_config(config_id: int, db: Session = Depends(get_db)):
     """Delete a notification config"""
     try:
@@ -1547,7 +1531,7 @@ async def delete_notification_config(config_id: int, db: Session = Depends(get_d
         raise HTTPException(status_code=500, detail=f"Failed to delete notification config: {str(e)}")
 
 
-@app.post("/notification_configs/{config_id}/test")
+@app.post("/notification_configs/{config_id}/test", dependencies=[Depends(require_permission("admin:all"))])
 async def test_notification_config(config_id: int, db: Session = Depends(get_db)):
     """Test a notification config with sample data"""
     try:
@@ -1617,7 +1601,8 @@ async def login(user_credentials: UserLogin, db: Session = Depends(get_db)):
 
 @app.post("/api/auth/register", response_model=UserResponse)
 async def register(user_data: UserRegister, db: Session = Depends(get_db)):
-    """Register a new user"""
+    """Register a new user. The account starts with no role, so it can't see or change anything
+    until an administrator assigns one on the Users page."""
     # Check if username exists
     if db.query(User).filter(User.username == user_data.username).first():
         raise HTTPException(status_code=400, detail="Username already registered")
@@ -1637,10 +1622,8 @@ async def register(user_data: UserRegister, db: Session = Depends(get_db)):
         is_superuser=False
     )
 
-    # Assign default "viewer" role
-    viewer_role = db.query(Role).filter(Role.name == "viewer").first()
-    if viewer_role:
-        user.roles.append(viewer_role)
+    # No role yet: an administrator grants access (viewer, analyst or admin) on the Users page.
+    # Handing every sign-up the viewer role let anyone on the internet read every call.
 
     db.add(user)
     db.commit()
@@ -1855,21 +1838,8 @@ async def reset_database(
             try:
                 init_default_roles_and_permissions(new_db)
 
-                # Create default admin user
-                from .auth import get_password_hash
-                admin_user = User(
-                    username="admin",
-                    email="admin@example.com",
-                    hashed_password=get_password_hash("admin123"),
-                    full_name="Administrator",
-                    is_active=True,
-                    is_superuser=True
-                )
-                new_db.add(admin_user)
-                admin_role = new_db.query(Role).filter(Role.name == "admin").first()
-                if admin_role:
-                    admin_user.roles.append(admin_role)
-                new_db.commit()
+                # Re-create the admin account (ADMIN_PASSWORD, or a generated one in the log)
+                ensure_admin_user(new_db)
             finally:
                 new_db.close()
         else:

@@ -202,14 +202,14 @@ npm install
 
    The frontend will be available at: `http://localhost:5173` (or another port if 5173 is busy)
 
-### Default Login Credentials
+### The first admin account
 
-On first startup, a default admin user is automatically created:
+There is no default password. On the first start the API creates the admin account:
 
-- **Username**: `admin`
-- **Password**: `admin123`
+- **Username**: `admin` (or `ADMIN_USERNAME`)
+- **Password**: the value of `ADMIN_PASSWORD`, or, if that isn't set, a random password printed once in the API's console output
 
-**⚠️ Important**: Change this password immediately after first login!
+Sign in and change it in Settings. Anyone can sign up, but a new account has no access until an admin assigns it a role (viewer, analyst or admin) on the Users page.
 
 ---
 
@@ -220,9 +220,14 @@ On first startup, a default admin user is automatically created:
 Create a `.env` file in the project root (optional, but recommended for production):
 
 ```env
-# JWT Secret Key (REQUIRED in production - generate a secure random string)
-# Generate using: openssl rand -hex 32
-JWT_SECRET_KEY=your-very-secure-secret-key-here
+# Signs sign-in tokens. Generate with: openssl rand -hex 32
+# If it's missing, the API uses a random key for that run (everyone is signed out on restart).
+JWT_SECRET_KEY=
+
+# The first admin account (optional; without ADMIN_PASSWORD a random one is printed on first start)
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=
+
 
 # Email Configuration (for scheduled reports and notifications)
 SMTP_HOST=smtp.gmail.com
@@ -235,7 +240,8 @@ VITE_API_URL=http://127.0.0.1:8000
 ```
 
 **Important Notes**:
-- **JWT_SECRET_KEY**: Change this in production! Use a secure random string (e.g., `openssl rand -hex 32`)
+- **JWT_SECRET_KEY**: Set it to a random string (`openssl rand -hex 32`). The example values in the docs are refused.
+- **ADMIN_PASSWORD**: Sets the first admin's password. Without it, a random one is printed once in the API's console output.
 - **Gmail**: You must use an [App Password](docs/EMAIL_SETUP_GUIDE.md) instead of your regular password
 - Create a `.env` file from the `.env.example` template (copy and fill in your values)
 
@@ -283,8 +289,8 @@ All detailed documentation is available in the [`docs/`](docs/) directory:
 ### 1. Login
 
 1. Navigate to `http://localhost:5173`
-2. Login with default credentials: `admin` / `admin123`
-3. Change your password in Settings after first login
+2. Sign in as `admin` with your `ADMIN_PASSWORD`, or the password the API printed on its first start
+3. Change your password in Settings
 
 ### 2. Upload Audio
 
@@ -368,6 +374,19 @@ uvicorn api.main:app --reload
 # Run on different port
 uvicorn api.main:app --reload --port 8001
 ```
+
+### Security tests
+
+The tests stub the ML models, so they need only the web stack and run in a few seconds:
+
+```bash
+pip install -r requirements-test.txt
+pytest tests
+```
+
+They check that there is no default admin password or token secret, that every data route needs
+a signed-in user with the right permission, that new accounts see nothing until an admin grants a
+role, and that custom rules can't reach Python internals.
 
 ### Frontend Development
 

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- No default admin password: the first admin comes from `ADMIN_PASSWORD`, or a random password printed once on first start (also after a full database reset)
+- No default JWT secret: without `JWT_SECRET_KEY` (or with the documented example value) a random key is used for that run
+- Every data route (analyses, history, exports, compliance rules, scheduled reports, webhooks, notification settings) now needs a signed-in user with the matching permission; webhooks, schedules and notification settings are admin-only
+- New sign-ups start with no role (they used to get viewer, which could read every analysis); an admin assigns one on the Users page
+- Custom compliance rules are evaluated by a small allow-list evaluator (`api/safe_eval.py`) instead of `eval()`
+- The legacy Streamlit dashboard signs in before calling the API
+
 ### Added
 - Admin ability to delete users from UI
 - Admin ability to reset database from UI

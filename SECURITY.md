@@ -21,7 +21,7 @@ We will respond to security reports within 48 hours and work on a fix as quickly
 
 ### For Users
 
-1. **Change Default Credentials**: Immediately change the default admin password after installation
+1. **Set the first admin password**: Set `ADMIN_PASSWORD` before the first start, or use the generated one printed in the API's console output, then change it
 2. **Use Environment Variables**: Never commit secrets, API keys, or passwords to version control
 3. **Keep Dependencies Updated**: Regularly update dependencies to get security patches
 4. **Use HTTPS**: Always use HTTPS in production
@@ -39,8 +39,10 @@ We will respond to security reports within 48 hours and work on a fix as quickly
 
 ## Known Security Considerations
 
-- **Default Admin Password**: The default admin password (`admin123`) should be changed immediately
-- **JWT Secret Key**: The default JWT secret key should be changed in production
+- **Admin password**: There is no default. It comes from `ADMIN_PASSWORD` or is generated on first start
+- **JWT secret key**: There is no default. Without `JWT_SECRET_KEY`, a random key is used for each run
+- **Access control**: Every data route needs a signed-in user with the matching permission. New sign-ups have no role until an admin assigns one
+- **Custom rules**: Expressions are checked by `api/safe_eval.py` (comparisons, and/or/not, arithmetic, a few functions and text methods), never passed to `eval()`
 - **Database**: SQLite is used for development; consider PostgreSQL for production
 - **Email Passwords**: Use App Passwords for Gmail SMTP authentication
 - **File Uploads**: Validate file types and sizes for audio uploads

@@ -1,0 +1,15 @@
+# The security tests stub the ML models, so they only need the web stack.
+fastapi
+httpx
+pytest
+sqlalchemy
+python-jose[cryptography]
+bcrypt
+pydantic
+email-validator
+python-multipart
+apscheduler
+numpy
+requests
+fpdf2
+python-dateutil
