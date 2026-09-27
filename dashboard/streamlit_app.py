@@ -28,6 +28,44 @@ st.set_page_config(
     page_icon="🧠",
 )
 
+
+# The API needs a signed-in user: the admin password is ADMIN_PASSWORD, or the one the API
+# printed on its first start (see README). Every call below goes through this session.
+api = requests.Session()
+if "api_token" not in st.session_state:
+    st.session_state.api_token = None
+with st.sidebar:
+    if st.session_state.api_token:
+        st.caption(f"Signed in as {st.session_state.get('api_user', '')}")
+        if st.button("Sign out"):
+            st.session_state.api_token = None
+            st.rerun()
+    else:
+        with st.form("sign_in"):
+            st.subheader("Sign in")
+            username = st.text_input("Username", value="admin")
+            password = st.text_input("Password", type="password")
+            if st.form_submit_button("Sign in"):
+                try:
+                    login = requests.post(
+                        f"{FASTAPI_BASE_URL}/api/auth/login",
+                        json={"username": username, "password": password},
+                        timeout=15,
+                    )
+                except requests.RequestException:
+                    login = None
+                if login is not None and login.ok:
+                    st.session_state.api_token = login.json()["access_token"]
+                    st.session_state.api_user = username
+                    st.rerun()
+                else:
+                    st.error("Sign-in failed. Check the username and password, and that the API is running.")
+if not st.session_state.api_token:
+    st.info("Sign in from the sidebar to use the dashboard.")
+    st.stop()
+api.headers["Authorization"] = f"Bearer {st.session_state.api_token}"
+
+
 # ------------------------------------
 # SIDEBAR NAVIGATION
 # ------------------------------------
@@ -167,7 +205,7 @@ if page == "📊 New Analysis":
                         audio_data = uploaded_file
 
                     files = {"file": audio_data}
-                    response = requests.post(FASTAPI_ANALYZE_URL, files=files)
+                    response = api.post(FASTAPI_ANALYZE_URL, files=files)
 
                     if response.status_code != 200:
                         st.error(f"❌ Error {response.status_code}: {response.text}")
@@ -680,7 +718,7 @@ if page == "📊 New Analysis":
             if st.button("📄 Generate PDF Report"):
                 with st.spinner("Creating your compliance report..."):
                     try:
-                        resp = requests.post(FASTAPI_REPORT_URL, json=data)
+                        resp = api.post(FASTAPI_REPORT_URL, json=data)
                         if resp.status_code == 200:
                             pdf_bytes = resp.content
                             b64 = base64.b64encode(pdf_bytes).decode()
@@ -774,7 +812,7 @@ elif page == "📦 Batch Processing":
                 status_text.text(f"Processing {len(uploaded_files)} file(s)... This may take a while ⏳")
 
                 # Send batch request
-                response = requests.post(FASTAPI_BATCH_URL, files=files_data)
+                response = api.post(FASTAPI_BATCH_URL, files=files_data)
 
                 if response.status_code == 200:
                     batch_result = response.json()
@@ -867,7 +905,7 @@ elif page == "📦 Batch Processing":
                                 with col_exp1:
                                     if st.button(f"📄 PDF", key=f"pdf_batch_{filename}_{idx}"):
                                         with st.spinner("Generating PDF..."):
-                                            pdf_resp = requests.post(FASTAPI_REPORT_URL, json=result)
+                                            pdf_resp = api.post(FASTAPI_REPORT_URL, json=result)
                                             if pdf_resp.status_code == 200:
                                                 pdf_bytes = pdf_resp.content
                                                 b64 = base64.b64encode(pdf_bytes).decode()
@@ -943,7 +981,7 @@ elif page == "📜 History":
                     }
                     export_params = {k: v for k, v in export_params.items() if v is not None}
 
-                    csv_resp = requests.get(FASTAPI_EXPORT_CSV_URL, params=export_params)
+                    csv_resp = api.get(FASTAPI_EXPORT_CSV_URL, params=export_params)
                     if csv_resp.status_code == 200:
                         b64_csv = base64.b64encode(csv_resp.content).decode()
                         href = (
@@ -967,7 +1005,7 @@ elif page == "📜 History":
                     }
                     export_params = {k: v for k, v in export_params.items() if v is not None}
 
-                    json_resp = requests.get(FASTAPI_EXPORT_JSON_ALL_URL, params=export_params)
+                    json_resp = api.get(FASTAPI_EXPORT_JSON_ALL_URL, params=export_params)
                     if json_resp.status_code == 200:
                         json_data = json_resp.json()
                         json_str = json.dumps(json_data, indent=2, default=str)
@@ -994,7 +1032,7 @@ elif page == "📜 History":
         # Remove None values
         params = {k: v for k, v in params.items() if v is not None}
 
-        response = requests.get(FASTAPI_HISTORY_URL, params=params)
+        response = api.get(FASTAPI_HISTORY_URL, params=params)
 
         if response.status_code == 200:
             history_data = response.json()
@@ -1040,7 +1078,7 @@ elif page == "📜 History":
 
                         # Get full record details
                         record_id = row['ID']
-                        detail_response = requests.get(f"{FASTAPI_HISTORY_URL}/{record_id}")
+                        detail_response = api.get(f"{FASTAPI_HISTORY_URL}/{record_id}")
                         if detail_response.status_code == 200:
                             detail = detail_response.json()
                             st.subheader("Transcript")
@@ -1051,7 +1089,7 @@ elif page == "📜 History":
                             with col_exp1:
                                 if st.button(f"📄 Generate PDF", key=f"pdf_{record_id}"):
                                     with st.spinner("Generating PDF..."):
-                                        pdf_resp = requests.post(FASTAPI_REPORT_URL, json=detail)
+                                        pdf_resp = api.post(FASTAPI_REPORT_URL, json=detail)
                                         if pdf_resp.status_code == 200:
                                             pdf_bytes = pdf_resp.content
                                             b64 = base64.b64encode(pdf_bytes).decode()
@@ -1113,7 +1151,7 @@ elif page == "📈 Statistics & Trends":
     days_range = st.slider("Time Range (days)", min_value=7, max_value=365, value=30)
 
     try:
-        response = requests.get(FASTAPI_STATISTICS_URL, params={"days": days_range})
+        response = api.get(FASTAPI_STATISTICS_URL, params={"days": days_range})
 
         if response.status_code == 200:
             stats = response.json()
@@ -1208,7 +1246,7 @@ elif page == "⚖️ Compare":
 
     # Get available records
     try:
-        response = requests.get(FASTAPI_HISTORY_URL, params={"limit": 100})
+        response = api.get(FASTAPI_HISTORY_URL, params={"limit": 100})
         if response.status_code == 200:
             history_data = response.json()
             available_records = history_data.get("records", [])
@@ -1237,7 +1275,7 @@ elif page == "⚖️ Compare":
 
                         if st.button("🔍 Compare Selected Records", type="primary"):
                             with st.spinner("Comparing analyses..."):
-                                compare_response = requests.post(
+                                compare_response = api.post(
                                     FASTAPI_COMPARE_URL,
                                     json={"record_ids": record_ids}
                                 )

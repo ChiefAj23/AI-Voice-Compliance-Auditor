@@ -101,8 +101,9 @@ export default function LoginPage() {
 
         {import.meta.env.DEV && (
           <p className="text-center text-xs text-fg-subtle">
-            Development build · default admin <span className="code-chip">admin</span> /{' '}
-            <span className="code-chip">admin123</span>
+            Development build · sign in as <span className="code-chip">admin</span> with{' '}
+            <span className="code-chip">ADMIN_PASSWORD</span>, or the password the API printed on
+            its first start
           </p>
         )}
       </form>

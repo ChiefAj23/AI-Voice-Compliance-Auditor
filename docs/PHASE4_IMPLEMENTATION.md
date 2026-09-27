@@ -12,7 +12,7 @@
 - ✅ Default permissions: analysis:read/write/delete, user:read/write/delete, compliance:read/write/delete, admin:all
 - ✅ User management endpoints (CRUD)
 - ✅ Role assignment endpoints
-- ✅ Default admin user created on startup (username: admin, password: admin123)
+- ✅ Admin user created on startup (username: admin; the password comes from `ADMIN_PASSWORD` or is generated and printed once)
 - ✅ Token expiration (30 minutes)
 - ✅ OAuth2 password flow
 
@@ -191,11 +191,10 @@ Added to `requirements.txt`:
 On first startup:
 - Default roles created: admin, analyst, viewer
 - Default permissions created: analysis:read/write/delete, user:read/write/delete, compliance:read/write/delete, admin:all
-- Default admin user created:
-  - Username: `admin`
-  - Password: `admin123`
-  - Email: `admin@example.com`
-  - **⚠️ Change this password in production!**
+- Admin user created:
+  - Username: `admin` (or `ADMIN_USERNAME`)
+  - Password: `ADMIN_PASSWORD`, or a random one printed once in the API's console output
+  - Email: `admin@example.com` (or `ADMIN_EMAIL`)
 
 ---
 
@@ -203,16 +202,10 @@ On first startup:
 
 ### Environment Variables
 
-For production, set a secure secret key:
+Set a random secret key (without one, the API uses a new random key on every start):
 
 ```bash
-export JWT_SECRET_KEY="your-very-secure-secret-key-here"
-```
-
-Update `api/auth.py` to use environment variable:
-
-```python
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your-secret-key-change-in-production")
+export JWT_SECRET_KEY="$(openssl rand -hex 32)"
 ```
 
 ---

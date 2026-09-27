@@ -55,9 +55,9 @@ npm run dev
 
 - **Frontend**: http://localhost:5173
 - **API Docs**: http://127.0.0.1:8000/docs
-- **Default Login**: `admin` / `admin123`
+- **Sign in**: `admin` with `ADMIN_PASSWORD`, or the random password the API prints once in its console output on the first start
 
-**⚠️ Change the default password immediately!**
+Change the password after signing in.
 
 ---
 

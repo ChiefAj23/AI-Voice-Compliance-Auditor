@@ -7,13 +7,40 @@ from typing import Optional, List
 from jose import JWTError, jwt
 import bcrypt
 import os
+import secrets
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from api.database import get_db, User, Role, Permission
 
 # Security configuration
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your-secret-key-change-in-production")  # Change this in production!
+# Placeholders from the docs and .env.example: anyone can read them, so they are never used.
+_PLACEHOLDER_SECRETS = {
+    "your-secret-key-change-in-production",
+    "your-very-secure-secret-key-here",
+    "your-very-secure-secret-key-here-change-in-production",
+}
+
+
+def _load_secret_key() -> str:
+    """The key that signs sign-in tokens: JWT_SECRET_KEY, or a random one for this run.
+
+    There is no built-in default. A default printed in a public repo would let anyone sign a
+    token for any user.
+    """
+    secret = os.getenv("JWT_SECRET_KEY", "").strip()
+    if secret and secret not in _PLACEHOLDER_SECRETS:
+        return secret
+    print(
+        "WARNING: JWT_SECRET_KEY is not set (or is the example value). Using a random key for "
+        "this run, so everyone is signed out when the server restarts. Set JWT_SECRET_KEY, for "
+        "example with: openssl rand -hex 32",
+        flush=True,
+    )
+    return secrets.token_hex(32)
+
+
+SECRET_KEY = _load_secret_key()
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
@@ -259,3 +286,44 @@ def init_default_roles_and_permissions(db: Session):
 
         db.commit()
 
+
+def ensure_admin_user(db: Session) -> Optional[str]:
+    """Create the first admin account if it doesn't exist yet.
+
+    The username is ADMIN_USERNAME (default "admin") and the password is ADMIN_PASSWORD. With no
+    ADMIN_PASSWORD, a random password is generated and printed once to the server log. There is
+    no shared default password. Returns the generated password, if one was generated.
+    """
+    username = os.getenv("ADMIN_USERNAME", "admin").strip() or "admin"
+    if db.query(User).filter(User.username == username).first():
+        return None
+
+    password = os.getenv("ADMIN_PASSWORD", "")
+    generated = None
+    if not password:
+        generated = password = secrets.token_urlsafe(12)
+
+    admin_user = User(
+        username=username,
+        # Per username, so renaming the admin later doesn't collide with the first one's email.
+        email=os.getenv("ADMIN_EMAIL", "").strip() or f"{username}@example.com",
+        hashed_password=get_password_hash(password),
+        full_name="Administrator",
+        is_active=True,
+        is_superuser=True,
+    )
+    db.add(admin_user)
+    admin_role = db.query(Role).filter(Role.name == "admin").first()
+    if admin_role:
+        admin_user.roles.append(admin_role)
+    db.commit()
+
+    if generated:
+        print(
+            f"Created the admin account '{username}' with a generated password: {generated}\n"
+            "Sign in and change it, or set ADMIN_PASSWORD before the first start to choose it.",
+            flush=True,
+        )
+    else:
+        print(f"Created the admin account '{username}' with the password from ADMIN_PASSWORD.", flush=True)
+    return generated
