@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { AlertCircle } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { authApi } from '../services/api';
 import AuthLayout from '../components/AuthLayout';
 import { Field, Spinner } from '../components/ui';
 
@@ -14,6 +15,18 @@ export default function RegisterPage() {
   const [loading, setLoading] = useState(false);
   const { register } = useAuth();
   const navigate = useNavigate();
+  const [allowed, setAllowed] = useState<boolean | null>(null);
+  const [minLength, setMinLength] = useState(12);
+
+  useEffect(() => {
+    authApi
+      .getConfig()
+      .then((config) => {
+        setAllowed(config.allow_self_registration);
+        setMinLength(config.min_password_length);
+      })
+      .catch(() => setAllowed(true));
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -29,6 +42,25 @@ export default function RegisterPage() {
       setLoading(false);
     }
   };
+
+  if (allowed === false) {
+    return (
+      <AuthLayout
+        title="Accounts are created by an administrator"
+        description="Self-registration is off on this server. Ask an administrator for an account; you will set your own password at the first sign-in."
+        footer={
+          <Link to="/login" className="link">
+            Back to sign in
+          </Link>
+        }
+      >
+        <div className="callout callout-info" role="status">
+          <AlertCircle />
+          <p>New accounts are issued by your administrator.</p>
+        </div>
+      </AuthLayout>
+    );
+  }
 
   return (
     <AuthLayout
@@ -96,6 +128,7 @@ export default function RegisterPage() {
             name="password"
             type="password"
             autoComplete="new-password"
+              minLength={minLength}
             required
             className="input"
             value={password}

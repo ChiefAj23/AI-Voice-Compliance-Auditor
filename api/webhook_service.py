@@ -4,11 +4,10 @@ Sends alerts and analyses to external systems via HTTP webhooks
 """
 from typing import Dict, List, Optional, Any
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime
 from sqlalchemy.orm import Session
 from .database import Webhook
 import json
-import traceback
 
 
 class WebhookService:

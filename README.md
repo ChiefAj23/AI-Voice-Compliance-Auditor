@@ -80,6 +80,46 @@
 
 ---
 
+## 🔐 Security and configuration
+
+Every setting lives in the environment; `.env.example` lists them all.
+
+**Sign-in on every route.** All 64 API routes except `POST /api/auth/login`, `GET /api/auth/config`, `GET /health` and the registration endpoint need a bearer token, and each one checks a permission:
+
+| Permission | What it covers | admin | analyst | viewer |
+| --- | --- | :-: | :-: | :-: |
+| `analysis:read` | history, statistics, exports, comparisons, reports | ✓ | ✓ | ✓ |
+| `analysis:write` | analyze a recording, batch analysis | ✓ | ✓ | |
+| `analysis:delete` | delete a record | ✓ | | |
+| `compliance:read` / `compliance:write` / `compliance:delete` | rules | ✓ | read | read |
+| `integration:read` / `integration:write` | webhooks, notifications, scheduled reports | ✓ | read | |
+| `user:read` / `user:write` / `user:delete` | users, roles, teams | ✓ | | |
+| `audit:read` | the audit log | ✓ | | |
+
+Superusers hold every permission. Roles are editable in the database; the three above are seeded and kept up to date when new permissions are introduced. The web app follows the same table: pages a role cannot use are left out of the navigation, and opening one directly lands on History instead. Tokens are signed JWTs (PyJWT, HS256).
+
+**Passwords.** At least `MIN_PASSWORD_LENGTH` (12) characters, hashed with bcrypt. `POST /api/auth/change-password` changes one; accounts flagged `must_change_password` (the first administrator, and every account an administrator creates) can call nothing else until they do.
+
+**Rules cannot run code.** Custom rules are written in a small expression language (`api/safe_eval.py`) with names such as `text`, `sentiment`, `toxicity_score` and helpers such as `contains(text, "refund")` and `matches(text, r"\bguarantee(d|s)?\b")`. Anything outside the allow-list (imports, attributes, lambdas, comprehensions) is rejected when the rule is saved. Regular expressions are compiled at save time too.
+
+**Audit log.** Every request that changes something is recorded with the account, the path, the outcome and the client address (never the request body). Sign-ins, password changes and account creation get one explicit event each instead, successful or not, so refused attempts (a wrong password, a blocked registration) are in the log too. Read it at `GET /api/audit-logs` or on the Audit log page. Set `TRUST_PROXY_HEADERS=true` behind a reverse proxy so the address comes from `X-Forwarded-For`.
+
+**Rate limits.** `RATE_LIMIT_LOGIN` (10/minute per address) on sign-in, `RATE_LIMIT_ANALYZE` (30/minute) on analysis, `RATE_LIMIT_DEFAULT` (300/minute) elsewhere; over the limit returns 429.
+
+**Off by default.** Self-registration (`ALLOW_SELF_REGISTRATION`) and the database reset endpoint (`ALLOW_DB_RESET`).
+
+**Dependencies and CI.** `requirements.txt` is pinned, and `pip-audit` finds no known vulnerabilities in it. `.github/workflows/ci.yml` lints, runs the tests and audits the dependencies on every push and pull request, and type-checks and builds the front end.
+
+**Tests.** `pytest` runs the API suite against a throwaway database without loading any model. After changing model code or upgrading torch, transformers, shap or detoxify, also run the model smoke tests, which download and exercise every model an analysis uses:
+
+```bash
+pip install -r requirements.txt -r requirements-dev.txt
+pytest
+RUN_MODEL_TESTS=1 pytest tests/test_models.py
+```
+
+---
+
 ## 🛠️ Tech Stack
 
 ### Backend
@@ -202,14 +242,15 @@ npm install
 
    The frontend will be available at: `http://localhost:5173` (or another port if 5173 is busy)
 
-### Default Login Credentials
+### The first administrator
 
-On first startup, a default admin user is automatically created:
+On first start the API creates one administrator, `admin` (or `ADMIN_USERNAME`). Its password comes from `ADMIN_INITIAL_PASSWORD`; when that is not set, a one-time password is generated and printed once in the server log:
 
-- **Username**: `admin`
-- **Password**: `admin123`
+```
+First administrator created: username 'admin', one-time password '…'. Change it at the first sign-in.
+```
 
-**⚠️ Important**: Change this password immediately after first login!
+Either way the first sign-in goes straight to a "set a new password" screen, and nothing else works for that account until it is done. Self-registration is off by default: administrators add users from the Users page (or `POST /api/auth/register` with a `user:write` token), and every account they issue starts with a temporary password that its owner must replace.
 
 ---
 
@@ -222,7 +263,7 @@ Create a `.env` file in the project root (optional, but recommended for producti
 ```env
 # JWT Secret Key (REQUIRED in production - generate a secure random string)
 # Generate using: openssl rand -hex 32
-JWT_SECRET_KEY=your-very-secure-secret-key-here
+JWT_SECRET_KEY=<output of: openssl rand -hex 32>
 
 # Email Configuration (for scheduled reports and notifications)
 SMTP_HOST=smtp.gmail.com
@@ -235,7 +276,7 @@ VITE_API_URL=http://127.0.0.1:8000
 ```
 
 **Important Notes**:
-- **JWT_SECRET_KEY**: Change this in production! Use a secure random string (e.g., `openssl rand -hex 32`)
+- **JWT_SECRET_KEY**: required when `APP_ENV=production` (the API refuses to start without it); in development an unset key means a random per-process secret, so sessions end on restart. Generate one with `openssl rand -hex 32`.
 - **Gmail**: You must use an [App Password](docs/EMAIL_SETUP_GUIDE.md) instead of your regular password
 - Create a `.env` file from the `.env.example` template (copy and fill in your values)
 
@@ -283,7 +324,7 @@ All detailed documentation is available in the [`docs/`](docs/) directory:
 ### 1. Login
 
 1. Navigate to `http://localhost:5173`
-2. Login with default credentials: `admin` / `admin123`
+2. Sign in as `admin` with the one-time password from the server log (or `ADMIN_INITIAL_PASSWORD`), then choose a new password when asked
 3. Change your password in Settings after first login
 
 ### 2. Upload Audio

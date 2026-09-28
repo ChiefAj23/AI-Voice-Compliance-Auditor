@@ -2,7 +2,7 @@
 Keyword and phrase detection module for compliance monitoring
 """
 import re
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Optional
 
 # Default keyword lists for different categories
 DEFAULT_KEYWORDS = {

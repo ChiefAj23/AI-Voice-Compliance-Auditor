@@ -2,36 +2,49 @@
 AI-Powered Summarization Module
 Generates concise summaries of conversations using transformer models
 """
-from typing import Dict, Optional
-from transformers import pipeline
+from typing import Dict
 import re
 
 
-# Initialize summarization pipeline (lazy loading)
+class _Summarizer:
+    """
+    A sequence-to-sequence summarization model, loaded directly: transformers 5 no longer ships a
+    "summarization" pipeline. Called the way that pipeline was, it returns [{"summary_text": ...}].
+    """
+
+    def __init__(self, model_name: str):
+        import torch
+        from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+
+        self.name = model_name.split("/")[-1]
+        self.device = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.model = AutoModelForSeq2SeqLM.from_pretrained(model_name).to(self.device).eval()
+
+    def __call__(self, text: str, max_length: int, min_length: int, do_sample: bool = False):
+        import torch
+
+        inputs = self.tokenizer(text, truncation=True, max_length=1024, return_tensors="pt").to(self.device)
+        with torch.no_grad():
+            ids = self.model.generate(**inputs, max_length=max_length, min_length=min_length, do_sample=do_sample)
+        return [{"summary_text": self.tokenizer.decode(ids[0], skip_special_tokens=True).strip()}]
+
+
+# Loaded on first use
 _summarization_pipeline = None
 
 
 def get_summarization_pipeline():
-    """Get or initialize the summarization pipeline"""
+    """Get or initialize the summarization model"""
     global _summarization_pipeline
     if _summarization_pipeline is None:
         try:
-            # Use a lightweight summarization model
-            # facebook/bart-large-cnn is good but heavy, using smaller model for faster inference
-            _summarization_pipeline = pipeline(
-                "summarization",
-                model="facebook/bart-large-cnn",
-                tokenizer="facebook/bart-large-cnn",
-                framework="pt"
-            )
+            _summarization_pipeline = _Summarizer("facebook/bart-large-cnn")
         except Exception as e:
             print(f"Warning: Failed to load BART model, using fallback: {str(e)}")
             try:
                 # Fallback to smaller model
-                _summarization_pipeline = pipeline(
-                    "summarization",
-                    model="sshleifer/distilbart-cnn-12-6"
-                )
+                _summarization_pipeline = _Summarizer("sshleifer/distilbart-cnn-12-6")
             except Exception as e2:
                 print(f"Warning: Failed to load summarization model: {str(e2)}")
                 _summarization_pipeline = None
@@ -145,7 +158,7 @@ def summarize_conversation(
             "word_count": len(text.split()),
             "summary_word_count": len(formatted_summary.split()),
             "compression_ratio": round(len(formatted_summary.split()) / len(text.split()), 3) if text.split() else 0,
-            "model": "bart-large-cnn"
+            "model": summarizer.name
         }
 
     except Exception as e:

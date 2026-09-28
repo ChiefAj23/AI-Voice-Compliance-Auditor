@@ -2,9 +2,8 @@
 Intent Classification Module
 Classifies conversation intent (sales, support, complaint, etc.)
 """
-from typing import Dict, List, Optional
+from typing import Dict, List
 from transformers import pipeline
-import re
 
 
 # Initialize intent classification pipeline (lazy loading)

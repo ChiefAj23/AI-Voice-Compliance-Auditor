@@ -4,21 +4,38 @@ Handles JWT tokens, password hashing, and role-based access control
 """
 from datetime import datetime, timedelta
 from typing import Optional, List
-from jose import JWTError, jwt
+import jwt
+from jwt import InvalidTokenError
 import bcrypt
-import os
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from api.database import get_db, User, Role, Permission
+from api import settings
 
-# Security configuration
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your-secret-key-change-in-production")  # Change this in production!
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+# Security configuration comes from the environment (api/settings.py).
+SECRET_KEY = settings.JWT_SECRET_KEY
+ALGORITHM = settings.JWT_ALGORITHM
+ACCESS_TOKEN_EXPIRE_MINUTES = settings.ACCESS_TOKEN_EXPIRE_MINUTES
+
+# Routes a user may call while a password change is still pending.
+PASSWORD_CHANGE_ALLOWED_PATHS = {"/api/auth/change-password", "/api/auth/me", "/api/auth/config"}
 
 # OAuth2 scheme
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/auth/login")
+
+
+def validate_password(password: str) -> Optional[str]:
+    """The password policy: returns a message when the password is not acceptable, else None."""
+    if not isinstance(password, str) or len(password) < settings.MIN_PASSWORD_LENGTH:
+        return f"Password must be at least {settings.MIN_PASSWORD_LENGTH} characters"
+    if len(password) > 256:
+        return "Password must be at most 256 characters"
+    if password.strip() != password:
+        return "Password must not start or end with spaces"
+    if password.lower() in {"password", "administrator", "changeme", "welcome"} or password.isdigit():
+        return "Password is too common"
+    return None
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -74,6 +91,7 @@ def authenticate_user(db: Session, username: str, password: str) -> Optional[Use
 
 
 def get_current_user(
+    request: Request,
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db)
 ) -> User:
@@ -88,7 +106,7 @@ def get_current_user(
         username: str = payload.get("sub")
         if username is None:
             raise credentials_exception
-    except JWTError:
+    except InvalidTokenError:
         raise credentials_exception
 
     user = db.query(User).filter(User.username == username).first()
@@ -98,6 +116,12 @@ def get_current_user(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User account is inactive"
+        )
+    # A pending password change blocks everything but changing it.
+    if getattr(user, "must_change_password", False) and request.url.path not in PASSWORD_CHANGE_ALLOWED_PATHS:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "password_change_required", "message": "Set a new password before continuing"},
         )
     return user
 
@@ -132,7 +156,7 @@ def get_optional_user(
         if user is None or not user.is_active:
             return None
         return user
-    except (JWTError, HTTPException, KeyError, IndexError):
+    except (InvalidTokenError, HTTPException, KeyError, IndexError):
         return None
 
 
@@ -211,6 +235,9 @@ def init_default_roles_and_permissions(db: Session):
         {"name": "compliance:read", "description": "View compliance rules", "resource": "compliance", "action": "read"},
         {"name": "compliance:write", "description": "Create/edit compliance rules", "resource": "compliance", "action": "write"},
         {"name": "compliance:delete", "description": "Delete compliance rules", "resource": "compliance", "action": "delete"},
+        {"name": "integration:read", "description": "View webhooks, notifications and scheduled reports", "resource": "integration", "action": "read"},
+        {"name": "integration:write", "description": "Create/edit/delete webhooks, notifications and scheduled reports", "resource": "integration", "action": "write"},
+        {"name": "audit:read", "description": "Read the audit log", "resource": "audit", "action": "read"},
         {"name": "admin:all", "description": "Full admin access", "resource": "admin", "action": "all"},
     ]
 
@@ -222,17 +249,18 @@ def init_default_roles_and_permissions(db: Session):
 
     db.commit()
 
-    # Default roles
+    # Default roles. Existing roles gain any default permission they are missing, so an upgrade
+    # that adds a permission does not lock the default roles out of it.
     roles = [
         {
             "name": "admin",
             "description": "Administrator with full access",
-            "permissions": ["analysis:read", "analysis:write", "analysis:delete", "user:read", "user:write", "user:delete", "compliance:read", "compliance:write", "compliance:delete", "admin:all"]
+            "permissions": [p["name"] for p in permissions]
         },
         {
             "name": "analyst",
             "description": "Can view and create analyses",
-            "permissions": ["analysis:read", "analysis:write", "compliance:read"]
+            "permissions": ["analysis:read", "analysis:write", "compliance:read", "integration:read"]
         },
         {
             "name": "viewer",
@@ -251,11 +279,13 @@ def init_default_roles_and_permissions(db: Session):
             db.add(role)
             db.flush()
 
-            # Assign permissions
-            for perm_name in role_data["permissions"]:
-                perm = db.query(Permission).filter(Permission.name == perm_name).first()
-                if perm:
-                    role.permissions.append(perm)
+        have = {perm.name for perm in role.permissions}
+        for perm_name in role_data["permissions"]:
+            if perm_name in have:
+                continue
+            perm = db.query(Permission).filter(Permission.name == perm_name).first()
+            if perm:
+                role.permissions.append(perm)
 
         db.commit()
 

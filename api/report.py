@@ -1,6 +1,5 @@
 from fpdf import FPDF
 from datetime import datetime
-import os
 from pathlib import Path
 
 class CompliancePDF(FPDF):

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { FormEvent } from 'react';
-import { Info, KeyRound, Lock, Pencil, Search, Trash2, UserCheck, UserX, Users } from 'lucide-react';
-import api, { usersApi } from '../services/api';
+import { Info, KeyRound, Lock, Pencil, Search, Trash2, UserCheck, UserPlus, UserX, Users } from 'lucide-react';
+import api, { authApi, usersApi } from '../services/api';
 import type { Role, User } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { humanize } from '../utils/format';
@@ -38,6 +38,35 @@ export default function UsersPage() {
   const { user: currentUser } = useAuth();
   const toast = useToast();
   const confirm = useConfirm();
+  const [showCreate, setShowCreate] = useState(false);
+  const [createData, setCreateData] = useState({ username: '', email: '', full_name: '', password: '', role: 'viewer' });
+  const [createdNote, setCreatedNote] = useState<string | null>(null);
+
+  // Accounts are issued here: the API creates the user with a temporary password that must be replaced at the first sign-in.
+  const handleCreate = async (e: FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      const created = await authApi.register({
+        username: createData.username.trim(),
+        email: createData.email.trim(),
+        password: createData.password,
+        full_name: createData.full_name.trim() || undefined,
+      });
+      const role = roles.find((r) => r.name === createData.role);
+      if (role && createData.role !== 'viewer') {
+        await api.post(`/api/users/${created.id}/roles`, { role_id: role.id });
+      }
+      setCreatedNote(`${created.username} can sign in with the temporary password and will be asked to choose a new one.`);
+      setCreateData({ username: '', email: '', full_name: '', password: '', role: 'viewer' });
+      toast.success('User created', `${created.username} was added${role && createData.role !== 'viewer' ? ` as ${humanize(role.name)}` : ''}.`);
+      await loadUsers();
+    } catch (error) {
+      toast.error('Could not create the user', errorDetail(error) || 'Check the details and try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // Non-admins see the access notice instead of the list, so load errors stay quiet for them.
   const canManageUsers = !!currentUser && (currentUser.is_superuser || currentUser.roles.includes('admin'));
@@ -207,7 +236,16 @@ export default function UsersPage() {
 
   return (
     <div>
-      <PageHeader title="Users" description="Manage access and roles." />
+      <PageHeader
+        title="Users"
+        description="Manage access and roles."
+        actions={
+          <button type="button" className="btn btn-primary" onClick={() => { setCreatedNote(null); setShowCreate(true); }}>
+            <UserPlus className="h-4 w-4" aria-hidden="true" />
+            Add user
+          </button>
+        }
+      />
 
       <Card className="overflow-hidden">
         {/* Toolbar */}
@@ -484,6 +522,57 @@ export default function UsersPage() {
             )}
           </div>
         )}
+      </Modal>
+
+      <Modal
+        open={showCreate}
+        onClose={() => setShowCreate(false)}
+        title="Add user"
+        description="Set a temporary password to hand over; the user replaces it at the first sign-in."
+        icon={<UserPlus className="h-5 w-5" aria-hidden="true" />}
+      >
+        <form className="space-y-4" onSubmit={handleCreate}>
+          {createdNote && (
+            <div className="callout callout-success" role="status">
+              <UserCheck />
+              <p>{createdNote}</p>
+            </div>
+          )}
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Username" htmlFor="new-username" required>
+              <input id="new-username" className="input" required autoComplete="off" value={createData.username} onChange={(e) => setCreateData({ ...createData, username: e.target.value })} />
+            </Field>
+            <Field label="Email" htmlFor="new-email" required>
+              <input id="new-email" type="email" className="input" required autoComplete="off" value={createData.email} onChange={(e) => setCreateData({ ...createData, email: e.target.value })} />
+            </Field>
+          </div>
+          <Field label="Full name" htmlFor="new-full-name">
+            <input id="new-full-name" className="input" value={createData.full_name} onChange={(e) => setCreateData({ ...createData, full_name: e.target.value })} />
+          </Field>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Temporary password" htmlFor="new-password" help="At least 12 characters. Share it with the user directly." required>
+              <input id="new-password" type="text" className="input font-mono" required minLength={12} autoComplete="off" value={createData.password} onChange={(e) => setCreateData({ ...createData, password: e.target.value })} />
+            </Field>
+            <Field label="Role" htmlFor="new-role">
+              <select id="new-role" className="input" value={createData.role} onChange={(e) => setCreateData({ ...createData, role: e.target.value })}>
+                {(roles.length ? roles : [{ id: 0, name: 'viewer' } as Role]).map((role) => (
+                  <option key={role.name} value={role.name}>
+                    {humanize(role.name)}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" className="btn btn-secondary" onClick={() => setShowCreate(false)}>
+              Close
+            </button>
+            <button type="submit" className="btn btn-primary" disabled={loading}>
+              {loading && <Spinner />}
+              Create user
+            </button>
+          </div>
+        </form>
       </Modal>
     </div>
   );

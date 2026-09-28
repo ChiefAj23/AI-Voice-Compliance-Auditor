@@ -1,3 +1,5 @@
+from functools import lru_cache
+
 import shap
 import numpy as np
 import torch
@@ -5,9 +7,19 @@ from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
 MODEL_NAME = "unitary/toxic-bert"
 
-tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME)
-model.eval()
+
+@lru_cache(maxsize=1)
+def toxic_bert():
+    """
+    The tokenizer and model, loaded on first use rather than at import and shared with
+    explain_enhanced. Callers get the real objects: SHAP chooses its text masker by the
+    tokenizer's class, so a stand-in object would make it treat the text as numbers.
+    """
+    tok = AutoTokenizer.from_pretrained(MODEL_NAME)
+    mdl = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME)
+    mdl.eval()
+    return tok, mdl
+
 
 def explain_toxicity(text: str, max_tokens: int = 128):
     """
@@ -17,6 +29,7 @@ def explain_toxicity(text: str, max_tokens: int = 128):
     # Ensure the text input is properly formatted
     if not isinstance(text, str):
         text = str(text)
+    tokenizer, model = toxic_bert()
 
     def predict(batch_texts):
         # SHAP sometimes sends numpy arrays — convert them to list[str]

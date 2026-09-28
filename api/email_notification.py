@@ -2,8 +2,8 @@
 Email Notification Service
 Sends email alerts for compliance violations and critical issues
 """
-from typing import Dict, List, Optional, Any
-from datetime import datetime, timedelta
+from typing import Dict, List
+from datetime import datetime
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText

@@ -46,9 +46,18 @@ from .database import (
 )
 from pydantic import BaseModel, EmailStr
 from typing import Optional as Opt
-from datetime import timedelta
 import json
+import re
+import secrets
 import traceback
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from . import settings
+from .audit import AuditMiddleware, client_ip, record as audit_record
+from .auth import validate_password
+from .database import AuditLog
+from .safe_eval import UnsafeExpression, validate as validate_expression
 
 
 def _convert_numpy_types(obj: Any) -> Any:
@@ -68,16 +77,70 @@ def _convert_numpy_types(obj: Any) -> Any:
     else:
         return obj
 
-app = FastAPI()
+app = FastAPI(title="Voice Compliance Auditor", version=settings.APP_VERSION)
 
-# Add CORS middleware to allow React frontend
+# Origins allowed to call the API from a browser (CORS_ORIGINS).
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Rate limits: a default for every route, stricter ones on sign-in and analysis (settings.RATE_LIMIT_*).
+limiter = Limiter(
+    key_func=lambda request: client_ip(request) or "unknown",
+    default_limits=[settings.RATE_LIMIT_DEFAULT],
+    enabled=settings.RATE_LIMITING_ENABLED,
+)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
+# The audit trail of every request that changes something.
+app.add_middleware(AuditMiddleware)
+
+
+def bootstrap_admin(db) -> None:
+    """The first administrator, once: password from ADMIN_INITIAL_PASSWORD or generated and printed once."""
+    if db.query(User).filter(User.username == settings.ADMIN_USERNAME).first():
+        return
+    generated = not settings.ADMIN_INITIAL_PASSWORD
+    password = settings.ADMIN_INITIAL_PASSWORD or secrets.token_urlsafe(12)
+    admin_user = User(
+        username=settings.ADMIN_USERNAME,
+        email=settings.ADMIN_EMAIL,
+        hashed_password=get_password_hash(password),
+        full_name="Administrator",
+        is_active=True,
+        is_superuser=True,
+        must_change_password=True,
+    )
+    admin_role = db.query(Role).filter(Role.name == "admin").first()
+    if admin_role:
+        admin_user.roles.append(admin_role)
+    db.add(admin_user)
+    db.commit()
+    if generated:
+        print(f"First administrator created: username '{settings.ADMIN_USERNAME}', one-time password '{password}'. Change it at the first sign-in.")
+    else:
+        print(f"First administrator '{settings.ADMIN_USERNAME}' created from ADMIN_INITIAL_PASSWORD; it must be changed at the first sign-in.")
+
+
+def _validate_rule_pattern(rule_type, pattern) -> None:
+    """Reject a rule whose pattern would fail or is not allowed, at save time rather than at analysis time."""
+    if pattern is None:
+        return
+    if rule_type == "regex":
+        try:
+            re.compile(pattern)
+        except re.error as e:
+            raise HTTPException(status_code=400, detail=f"Invalid regular expression: {e}")
+    if rule_type == "custom":
+        try:
+            validate_expression(pattern)
+        except UnsafeExpression as e:
+            raise HTTPException(status_code=400, detail=f"Rule expression not allowed: {e}")
 
 # Initialize database and scheduler on startup
 @app.on_event("startup")
@@ -89,25 +152,7 @@ async def startup_event():
     try:
         init_default_roles_and_permissions(db)
 
-        # Create default admin user if it doesn't exist
-        admin_user = db.query(User).filter(User.username == "admin").first()
-        if not admin_user:
-            from .auth import get_password_hash
-            admin_user = User(
-                username="admin",
-                email="admin@example.com",
-                hashed_password=get_password_hash("admin123"),  # Change this in production!
-                full_name="Administrator",
-                is_active=True,
-                is_superuser=True
-            )
-            db.add(admin_user)
-            # Assign admin role
-            admin_role = db.query(Role).filter(Role.name == "admin").first()
-            if admin_role:
-                admin_user.roles.append(admin_role)
-            db.commit()
-            print("Default admin user created: username='admin', password='admin123'")
+        bootstrap_admin(db)
 
         # Initialize scheduler and load all active schedules
         scheduler = get_scheduler()
@@ -125,12 +170,13 @@ async def shutdown_event():
     scheduler.shutdown()
 
 @app.post("/analyze_audio")
+@limiter.limit(settings.RATE_LIMIT_ANALYZE)
 async def analyze_audio(
+    request: Request,
     file: UploadFile=File(...),
     db: Session = Depends(get_db),
-    current_user: Optional[User] = Depends(get_optional_user)
+    current_user: User = Depends(require_permission("analysis:write"))
 ):
-    # Optional authentication - if token provided, use it, otherwise allow unauthenticated access
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
             tmp.write(await file.read())
@@ -347,7 +393,7 @@ async def analyze_audio(
 
 
 @app.get("/supported_languages")
-async def get_supported_languages_endpoint():
+async def get_supported_languages_endpoint(_actor: User = Depends(require_permission("analysis:read"))):
     """Get list of supported languages"""
     try:
         languages = get_supported_languages()
@@ -357,7 +403,7 @@ async def get_supported_languages_endpoint():
 
 
 @app.post("/analyze_batch")
-async def analyze_batch(files: List[UploadFile] = File(...), db: Session = Depends(get_db)):
+async def analyze_batch(files: List[UploadFile] = File(...), db: Session = Depends(get_db), _actor: User = Depends(require_permission("analysis:write"))):
     """Process multiple audio files in batch"""
     if not files or len(files) == 0:
         raise HTTPException(status_code=400, detail="No files provided")
@@ -432,7 +478,7 @@ async def analyze_batch(files: List[UploadFile] = File(...), db: Session = Depen
 
 
 @app.post("/generate_report")
-async def generate_report(request: Request):
+async def generate_report(request: Request, _actor: User = Depends(require_permission("analysis:read"))):
     try:
         data = await request.json()
         if not data:
@@ -466,7 +512,9 @@ async def get_history(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     filename: Optional[str] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _actor: User = Depends(require_permission("analysis:read")),
+
 ):
     """Get analysis history with filtering"""
     try:
@@ -511,7 +559,7 @@ async def get_history(
 
 
 @app.get("/history/{record_id}")
-async def get_record(record_id: int, db: Session = Depends(get_db)):
+async def get_record(record_id: int, db: Session = Depends(get_db), _actor: User = Depends(require_permission("analysis:read"))):
     """Get a specific analysis record by ID"""
     try:
         record = db.query(AnalysisRecord).filter(AnalysisRecord.id == record_id).first()
@@ -525,7 +573,7 @@ async def get_record(record_id: int, db: Session = Depends(get_db)):
 
 
 @app.delete("/history/{record_id}")
-async def delete_record(record_id: int, db: Session = Depends(get_db)):
+async def delete_record(record_id: int, db: Session = Depends(get_db), _actor: User = Depends(require_permission("analysis:delete"))):
     """Delete a specific analysis record"""
     try:
         record = db.query(AnalysisRecord).filter(AnalysisRecord.id == record_id).first()
@@ -544,7 +592,9 @@ async def delete_record(record_id: int, db: Session = Depends(get_db)):
 @app.get("/statistics")
 async def get_statistics(
     days: int = Query(30, ge=1, le=365),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _actor: User = Depends(require_permission("analysis:read")),
+
 ):
     """Get statistics and trends"""
     try:
@@ -621,7 +671,7 @@ async def get_statistics(
 
 
 @app.get("/export/json/{record_id}")
-async def export_json(record_id: int, db: Session = Depends(get_db)):
+async def export_json(record_id: int, db: Session = Depends(get_db), _actor: User = Depends(require_permission("analysis:read"))):
     """Export a specific analysis record as JSON"""
     try:
         record = db.query(AnalysisRecord).filter(AnalysisRecord.id == record_id).first()
@@ -646,7 +696,9 @@ async def export_csv(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     filename: Optional[str] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _actor: User = Depends(require_permission("analysis:read")),
+
 ):
     """Export analysis history as CSV"""
     try:
@@ -722,7 +774,9 @@ async def export_json_all(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     filename: Optional[str] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _actor: User = Depends(require_permission("analysis:read")),
+
 ):
     """Export all analysis records as JSON array"""
     try:
@@ -764,7 +818,7 @@ async def export_json_all(
 
 
 @app.post("/compare")
-async def compare_analyses(request: Request, db: Session = Depends(get_db)):
+async def compare_analyses(request: Request, db: Session = Depends(get_db), _actor: User = Depends(require_permission("analysis:read"))):
     """Compare two or more analysis records"""
     try:
         data = await request.json()
@@ -879,7 +933,9 @@ class ComplianceRuleUpdate(BaseModel):
 async def get_compliance_rules(
     category: Opt[str] = None,
     is_active: Opt[bool] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _actor: User = Depends(require_permission("compliance:read")),
+
 ):
     """Get all compliance rules with optional filters"""
     try:
@@ -897,7 +953,7 @@ async def get_compliance_rules(
 
 
 @app.get("/compliance_rules/{rule_id}")
-async def get_compliance_rule(rule_id: int, db: Session = Depends(get_db)):
+async def get_compliance_rule(rule_id: int, db: Session = Depends(get_db), _actor: User = Depends(require_permission("compliance:read"))):
     """Get a specific compliance rule by ID"""
     try:
         rule = db.query(ComplianceRule).filter(ComplianceRule.id == rule_id).first()
@@ -911,7 +967,9 @@ async def get_compliance_rule(rule_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/compliance_rules")
-async def create_compliance_rule(rule_data: ComplianceRuleCreate, db: Session = Depends(get_db)):
+async def create_compliance_rule(rule_data: ComplianceRuleCreate, db: Session = Depends(get_db), _actor: User = Depends(require_permission("compliance:write"))):
+    # create_compliance_rule: validated before anything is written
+    _validate_rule_pattern(getattr(rule_data, 'rule_type', None), getattr(rule_data, 'pattern', None))
     """Create a new compliance rule"""
     try:
         # Validate rule type
@@ -953,7 +1011,9 @@ async def create_compliance_rule(rule_data: ComplianceRuleCreate, db: Session = 
 
 
 @app.put("/compliance_rules/{rule_id}")
-async def update_compliance_rule(rule_id: int, rule_data: ComplianceRuleUpdate, db: Session = Depends(get_db)):
+async def update_compliance_rule(rule_id: int, rule_data: ComplianceRuleUpdate, db: Session = Depends(get_db), _actor: User = Depends(require_permission("compliance:write"))):
+    # update_compliance_rule: validated before anything is written
+    _validate_rule_pattern(getattr(rule_data, 'rule_type', None), getattr(rule_data, 'pattern', None))
     """Update an existing compliance rule"""
     try:
         rule = db.query(ComplianceRule).filter(ComplianceRule.id == rule_id).first()
@@ -980,7 +1040,7 @@ async def update_compliance_rule(rule_id: int, rule_data: ComplianceRuleUpdate, 
 
 
 @app.delete("/compliance_rules/{rule_id}")
-async def delete_compliance_rule(rule_id: int, db: Session = Depends(get_db)):
+async def delete_compliance_rule(rule_id: int, db: Session = Depends(get_db), _actor: User = Depends(require_permission("compliance:delete"))):
     """Delete a compliance rule"""
     try:
         rule = db.query(ComplianceRule).filter(ComplianceRule.id == rule_id).first()
@@ -1003,7 +1063,9 @@ async def test_compliance_rule(
     rule_id: int,
     text: str = Query(..., description="Text to test the rule against"),
     analysis: Opt[dict] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _actor: User = Depends(require_permission("compliance:write")),
+
 ):
     """Test a compliance rule against sample text"""
     try:
@@ -1060,7 +1122,9 @@ class ScheduledReportUpdate(BaseModel):
 @app.get("/scheduled_reports")
 async def get_scheduled_reports(
     is_active: Opt[bool] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _actor: User = Depends(require_permission("integration:read")),
+
 ):
     """Get all scheduled reports with optional filters"""
     try:
@@ -1074,7 +1138,7 @@ async def get_scheduled_reports(
 
 
 @app.get("/scheduled_reports/{report_id}")
-async def get_scheduled_report(report_id: int, db: Session = Depends(get_db)):
+async def get_scheduled_report(report_id: int, db: Session = Depends(get_db), _actor: User = Depends(require_permission("integration:read"))):
     """Get a specific scheduled report by ID"""
     try:
         report = db.query(ScheduledReport).filter(ScheduledReport.id == report_id).first()
@@ -1088,7 +1152,7 @@ async def get_scheduled_report(report_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/scheduled_reports")
-async def create_scheduled_report(report_data: ScheduledReportCreate, db: Session = Depends(get_db)):
+async def create_scheduled_report(report_data: ScheduledReportCreate, db: Session = Depends(get_db), _actor: User = Depends(require_permission("integration:write"))):
     """Create a new scheduled report"""
     try:
         # Validate schedule type
@@ -1139,7 +1203,9 @@ async def create_scheduled_report(report_data: ScheduledReportCreate, db: Sessio
 async def update_scheduled_report(
     report_id: int,
     report_data: ScheduledReportUpdate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _actor: User = Depends(require_permission("integration:write")),
+
 ):
     """Update an existing scheduled report"""
     try:
@@ -1173,7 +1239,7 @@ async def update_scheduled_report(
 
 
 @app.delete("/scheduled_reports/{report_id}")
-async def delete_scheduled_report(report_id: int, db: Session = Depends(get_db)):
+async def delete_scheduled_report(report_id: int, db: Session = Depends(get_db), _actor: User = Depends(require_permission("integration:write"))):
     """Delete a scheduled report"""
     try:
         report = db.query(ScheduledReport).filter(ScheduledReport.id == report_id).first()
@@ -1196,7 +1262,7 @@ async def delete_scheduled_report(report_id: int, db: Session = Depends(get_db))
 
 
 @app.post("/scheduled_reports/{report_id}/run_now")
-async def run_scheduled_report_now(report_id: int, db: Session = Depends(get_db)):
+async def run_scheduled_report_now(report_id: int, db: Session = Depends(get_db), _actor: User = Depends(require_permission("integration:write"))):
     """Manually trigger a scheduled report to run immediately"""
     try:
         report = db.query(ScheduledReport).filter(ScheduledReport.id == report_id).first()
@@ -1258,7 +1324,9 @@ class WebhookUpdate(BaseModel):
 @app.get("/webhooks")
 async def get_webhooks(
     is_active: Opt[bool] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _actor: User = Depends(require_permission("integration:read")),
+
 ):
     """Get all webhooks with optional filters"""
     try:
@@ -1272,7 +1340,7 @@ async def get_webhooks(
 
 
 @app.get("/webhooks/{webhook_id}")
-async def get_webhook(webhook_id: int, db: Session = Depends(get_db)):
+async def get_webhook(webhook_id: int, db: Session = Depends(get_db), _actor: User = Depends(require_permission("integration:read"))):
     """Get a specific webhook by ID"""
     try:
         webhook = db.query(Webhook).filter(Webhook.id == webhook_id).first()
@@ -1286,7 +1354,7 @@ async def get_webhook(webhook_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/webhooks")
-async def create_webhook(webhook_data: WebhookCreate, db: Session = Depends(get_db)):
+async def create_webhook(webhook_data: WebhookCreate, db: Session = Depends(get_db), _actor: User = Depends(require_permission("integration:write"))):
     """Create a new webhook"""
     try:
         # Validate method
@@ -1336,7 +1404,9 @@ async def create_webhook(webhook_data: WebhookCreate, db: Session = Depends(get_
 async def update_webhook(
     webhook_id: int,
     webhook_data: WebhookUpdate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _actor: User = Depends(require_permission("integration:write")),
+
 ):
     """Update an existing webhook"""
     try:
@@ -1362,7 +1432,7 @@ async def update_webhook(
 
 
 @app.delete("/webhooks/{webhook_id}")
-async def delete_webhook(webhook_id: int, db: Session = Depends(get_db)):
+async def delete_webhook(webhook_id: int, db: Session = Depends(get_db), _actor: User = Depends(require_permission("integration:write"))):
     """Delete a webhook"""
     try:
         webhook = db.query(Webhook).filter(Webhook.id == webhook_id).first()
@@ -1381,7 +1451,7 @@ async def delete_webhook(webhook_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/webhooks/{webhook_id}/test")
-async def test_webhook(webhook_id: int, db: Session = Depends(get_db)):
+async def test_webhook(webhook_id: int, db: Session = Depends(get_db), _actor: User = Depends(require_permission("integration:write"))):
     """Test a webhook with sample data"""
     try:
         webhook = db.query(Webhook).filter(Webhook.id == webhook_id).first()
@@ -1434,7 +1504,9 @@ class NotificationConfigUpdate(BaseModel):
 @app.get("/notification_configs")
 async def get_notification_configs(
     is_active: Opt[bool] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _actor: User = Depends(require_permission("integration:read")),
+
 ):
     """Get all notification configs"""
     try:
@@ -1448,7 +1520,7 @@ async def get_notification_configs(
 
 
 @app.get("/notification_configs/{config_id}")
-async def get_notification_config(config_id: int, db: Session = Depends(get_db)):
+async def get_notification_config(config_id: int, db: Session = Depends(get_db), _actor: User = Depends(require_permission("integration:read"))):
     """Get a specific notification config by ID"""
     try:
         config = db.query(NotificationConfig).filter(NotificationConfig.id == config_id).first()
@@ -1464,7 +1536,9 @@ async def get_notification_config(config_id: int, db: Session = Depends(get_db))
 @app.post("/notification_configs")
 async def create_notification_config(
     config_data: NotificationConfigCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _actor: User = Depends(require_permission("integration:write")),
+
 ):
     """Create a new notification config"""
     try:
@@ -1503,7 +1577,9 @@ async def create_notification_config(
 async def update_notification_config(
     config_id: int,
     config_data: NotificationConfigUpdate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _actor: User = Depends(require_permission("integration:write")),
+
 ):
     """Update an existing notification config"""
     try:
@@ -1529,7 +1605,7 @@ async def update_notification_config(
 
 
 @app.delete("/notification_configs/{config_id}")
-async def delete_notification_config(config_id: int, db: Session = Depends(get_db)):
+async def delete_notification_config(config_id: int, db: Session = Depends(get_db), _actor: User = Depends(require_permission("integration:write"))):
     """Delete a notification config"""
     try:
         config = db.query(NotificationConfig).filter(NotificationConfig.id == config_id).first()
@@ -1548,7 +1624,7 @@ async def delete_notification_config(config_id: int, db: Session = Depends(get_d
 
 
 @app.post("/notification_configs/{config_id}/test")
-async def test_notification_config(config_id: int, db: Session = Depends(get_db)):
+async def test_notification_config(config_id: int, db: Session = Depends(get_db), _actor: User = Depends(require_permission("integration:write"))):
     """Test a notification config with sample data"""
     try:
         config = db.query(NotificationConfig).filter(NotificationConfig.id == config_id).first()
@@ -1594,16 +1670,25 @@ class UserResponse(BaseModel):
     is_superuser: bool
     roles: List[str]
     teams: List[str]
+    must_change_password: bool = False
+    permissions: List[str] = []
 
 class Token(BaseModel):
     access_token: str
     token_type: str
+    must_change_password: bool = False
+
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: str
 
 @app.post("/api/auth/login", response_model=Token)
-async def login(user_credentials: UserLogin, db: Session = Depends(get_db)):
+@limiter.limit(settings.RATE_LIMIT_LOGIN)
+async def login(request: Request, user_credentials: UserLogin, db: Session = Depends(get_db)):
     """Authenticate user and return JWT token"""
     user = authenticate_user(db, user_credentials.username, user_credentials.password)
     if not user:
+        audit_record(db, action="auth.login", request=request, username=user_credentials.username, status="failure")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
@@ -1613,18 +1698,65 @@ async def login(user_credentials: UserLogin, db: Session = Depends(get_db)):
     access_token = create_access_token(
         data={"sub": user.username}, expires_delta=access_token_expires
     )
-    return {"access_token": access_token, "token_type": "bearer"}
+    audit_record(db, action="auth.login", request=request, user=user)
+    return {"access_token": access_token, "token_type": "bearer", "must_change_password": bool(user.must_change_password)}
+
+@app.post("/api/auth/change-password")
+async def change_password(
+    body: PasswordChange,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Change the signed-in user's password; clears the must-change flag."""
+    from .auth import verify_password
+    if not verify_password(body.current_password, current_user.hashed_password):
+        audit_record(db, action="auth.change_password", request=request, user=current_user, status="failure")
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    if body.new_password == body.current_password:
+        raise HTTPException(status_code=400, detail="The new password must differ from the current one")
+    problem = validate_password(body.new_password)
+    if problem:
+        raise HTTPException(status_code=400, detail=problem)
+    current_user.hashed_password = get_password_hash(body.new_password)
+    current_user.must_change_password = False
+    current_user.password_changed_at = dt.utcnow()
+    db.commit()
+    audit_record(db, action="auth.change_password", request=request, user=current_user)
+    return {"status": "ok"}
+
+@app.get("/api/auth/config")
+async def auth_config():
+    """What the sign-in screen needs to know before anyone is signed in."""
+    return {"allow_self_registration": settings.ALLOW_SELF_REGISTRATION, "min_password_length": settings.MIN_PASSWORD_LENGTH}
 
 @app.post("/api/auth/register", response_model=UserResponse)
-async def register(user_data: UserRegister, db: Session = Depends(get_db)):
-    """Register a new user"""
+async def register(
+    user_data: UserRegister,
+    request: Request,
+    db: Session = Depends(get_db),
+    actor: Optional[User] = Depends(get_optional_user),
+):
+    """Create a user. Self-registration is off unless ALLOW_SELF_REGISTRATION is set; otherwise user:write is needed."""
+    def refuse(status_code: int, detail: str):
+        audit_record(db, action="user.create", request=request, user=actor, resource_type="users", status="failure",
+                     details={"username": user_data.username, "reason": detail})
+        raise HTTPException(status_code=status_code, detail=detail)
+
+    if not settings.ALLOW_SELF_REGISTRATION:
+        allowed = actor is not None and (actor.is_superuser or "user:write" in get_user_permissions(actor, db))
+        if not allowed:
+            refuse(403, "Self-registration is disabled; ask an administrator for an account")
+    problem = validate_password(user_data.password)
+    if problem:
+        refuse(400, problem)
     # Check if username exists
     if db.query(User).filter(User.username == user_data.username).first():
-        raise HTTPException(status_code=400, detail="Username already registered")
+        refuse(400, "Username already registered")
 
     # Check if email exists
     if db.query(User).filter(User.email == user_data.email).first():
-        raise HTTPException(status_code=400, detail="Email already registered")
+        refuse(400, "Email already registered")
 
     # Create user
     hashed_password = get_password_hash(user_data.password)
@@ -1641,17 +1773,22 @@ async def register(user_data: UserRegister, db: Session = Depends(get_db)):
     viewer_role = db.query(Role).filter(Role.name == "viewer").first()
     if viewer_role:
         user.roles.append(viewer_role)
+    # An account made by an administrator starts with a password its owner must replace.
+    user.must_change_password = actor is not None and actor.username != user.username
 
     db.add(user)
     db.commit()
     db.refresh(user)
+    audit_record(db, action="user.create", request=request, user=actor, resource_type="users", resource_id=user.id, details={"username": user.username})
 
     return user.to_dict()
 
 @app.get("/api/auth/me", response_model=UserResponse)
-async def get_current_user_info(current_user: User = Depends(get_current_active_user)):
+async def get_current_user_info(current_user: User = Depends(get_current_active_user), db: Session = Depends(get_db)):
     """Get current authenticated user information"""
-    return current_user.to_dict()
+    data = current_user.to_dict()
+    data["permissions"] = sorted(get_user_permissions(current_user, db))
+    return data
 
 @app.get("/api/users", response_model=List[UserResponse])
 async def list_users(
@@ -1804,6 +1941,8 @@ async def reset_database(
     db: Session = Depends(get_db)
 ):
     """Reset database - drop and recreate tables (admin only, dangerous operation)"""
+    if not settings.ALLOW_DB_RESET:
+        raise HTTPException(status_code=403, detail="Database reset is disabled on this server (ALLOW_DB_RESET)")
     # Double check - must be superuser or admin
     if not current_user.is_superuser and "admin" not in [r.name for r in current_user.roles if r.is_active]:
         raise HTTPException(
@@ -1857,19 +1996,7 @@ async def reset_database(
 
                 # Create default admin user
                 from .auth import get_password_hash
-                admin_user = User(
-                    username="admin",
-                    email="admin@example.com",
-                    hashed_password=get_password_hash("admin123"),
-                    full_name="Administrator",
-                    is_active=True,
-                    is_superuser=True
-                )
-                new_db.add(admin_user)
-                admin_role = new_db.query(Role).filter(Role.name == "admin").first()
-                if admin_role:
-                    admin_user.roles.append(admin_role)
-                new_db.commit()
+                bootstrap_admin(new_db)
             finally:
                 new_db.close()
         else:
@@ -2299,3 +2426,42 @@ async def remove_member_from_team(
         db.commit()
 
     return {"message": f"User '{user.username}' removed from team '{team.name}'"}
+
+
+# ============================================================================
+# Health and audit
+# ============================================================================
+
+@app.get("/health")
+async def health():
+    """Liveness for load balancers and monitors; needs no sign-in and says nothing sensitive."""
+    return {"status": "ok", "version": settings.APP_VERSION}
+
+
+@app.get("/api/audit-logs")
+async def list_audit_logs(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=500),
+    username: Optional[str] = Query(None),
+    action: Optional[str] = Query(None, description="Prefix match, e.g. 'auth.' or 'DELETE'"),
+    status_filter: Optional[str] = Query(None, alias="status"),
+    date_from: Optional[datetime] = Query(None),
+    date_to: Optional[datetime] = Query(None),
+    _actor: User = Depends(require_permission("audit:read")),
+    db: Session = Depends(get_db),
+):
+    """The audit trail, newest first, with filters (audit:read)."""
+    query = db.query(AuditLog)
+    if username:
+        query = query.filter(AuditLog.username == username)
+    if action:
+        query = query.filter(AuditLog.action.like(f"{action}%"))
+    if status_filter:
+        query = query.filter(AuditLog.status == status_filter)
+    if date_from:
+        query = query.filter(AuditLog.timestamp >= date_from)
+    if date_to:
+        query = query.filter(AuditLog.timestamp <= date_to)
+    total = query.count()
+    rows = query.order_by(desc(AuditLog.timestamp), desc(AuditLog.id)).offset(skip).limit(limit).all()
+    return {"total": total, "skip": skip, "limit": limit, "records": [row.to_dict() for row in rows]}

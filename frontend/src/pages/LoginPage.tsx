@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { AlertCircle, CheckCircle2, Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { authApi } from '../services/api';
 import AuthLayout from '../components/AuthLayout';
 import { Field, Spinner } from '../components/ui';
 
@@ -15,6 +16,14 @@ export default function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const notice = (location.state as { message?: string } | null)?.message;
+  const [allowRegister, setAllowRegister] = useState(false);
+
+  useEffect(() => {
+    authApi
+      .getConfig()
+      .then((config) => setAllowRegister(config.allow_self_registration))
+      .catch(() => {});
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -22,8 +31,8 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      await login(username, password);
-      navigate('/');
+      const signedIn = await login(username, password);
+      navigate(signedIn.must_change_password ? '/change-password' : '/');
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Login failed. Please check your credentials.');
     } finally {
@@ -36,12 +45,16 @@ export default function LoginPage() {
       title="Sign in"
       description="Welcome back. Sign in to review calls and compliance results."
       footer={
-        <>
-          Don&apos;t have an account?{' '}
-          <Link to="/register" className="link">
-            Create one
-          </Link>
-        </>
+        allowRegister ? (
+          <>
+            Don&apos;t have an account?{' '}
+            <Link to="/register" className="link">
+              Create one
+            </Link>
+          </>
+        ) : (
+          <>Accounts are created by an administrator.</>
+        )
       }
     >
       <form className="space-y-5" onSubmit={handleSubmit}>
@@ -99,12 +112,6 @@ export default function LoginPage() {
           {loading ? 'Signing in…' : 'Sign in'}
         </button>
 
-        {import.meta.env.DEV && (
-          <p className="text-center text-xs text-fg-subtle">
-            Development build · default admin <span className="code-chip">admin</span> /{' '}
-            <span className="code-chip">admin123</span>
-          </p>
-        )}
       </form>
     </AuthLayout>
   );

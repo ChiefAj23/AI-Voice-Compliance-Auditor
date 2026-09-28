@@ -278,10 +278,10 @@ class ComplianceRuleEngine:
         if not rule.pattern:
             return False, None, "No custom expression specified"
 
-        # WARNING: Using eval() can be dangerous. In production, consider using ast.literal_eval
-        # or a more secure expression evaluator
+        # A small allow-listed expression language (api/safe_eval.py), never eval().
+        from .safe_eval import UnsafeExpression, safe_eval
+
         try:
-            # Create safe evaluation context
             context = {
                 "text": text,
                 "analysis": analysis,
@@ -296,13 +296,15 @@ class ComplianceRuleEngine:
                 "bool": bool
             }
 
-            result = eval(rule.pattern, {"__builtins__": {}}, context)
+            result = safe_eval(rule.pattern, context)
             matched = bool(result)
 
             value = result
             message = f"Custom rule evaluated: {result}" if matched else None
             return matched, value, message
 
+        except UnsafeExpression as e:
+            return False, None, f"Rule expression rejected: {e}"
         except Exception as e:
             return False, None, f"Error evaluating custom expression: {str(e)}"
 

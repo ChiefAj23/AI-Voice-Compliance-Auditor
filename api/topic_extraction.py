@@ -2,7 +2,7 @@
 Topic Extraction & Clustering Module
 Identifies main topics discussed in conversations using topic modeling
 """
-from typing import Dict, List, Optional
+from typing import Dict, List
 import re
 from collections import Counter
 from sklearn.feature_extraction.text import TfidfVectorizer
