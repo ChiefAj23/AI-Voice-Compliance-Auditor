@@ -6,6 +6,7 @@ import type { HistoryRecord } from '../services/api';
 import { formatDateTime, formatDuration, formatScore } from '../utils/format';
 import { complianceLabel, complianceTone, sentimentLabel, sentimentTone } from '../utils/status';
 import { Badge, Card, EmptyState, IconButton, Modal, PageHeader, useConfirm, useToast } from '../components/ui';
+import { PrivacyNote, RedactedText } from '../components/RedactedText';
 
 const DEFAULT_DAYS = 30;
 
@@ -393,8 +394,13 @@ export default function HistoryPage() {
             </dl>
             <div>
               <h3 className="section-title mb-2">Transcript</h3>
+              {selectedRecord.analysis?.pii && (
+                <div className="mb-3">
+                  <PrivacyNote privacy={selectedRecord.analysis.pii} />
+                </div>
+              )}
               <div className="max-h-72 overflow-y-auto whitespace-pre-wrap rounded-lg border border-line bg-surface-subtle p-4 text-sm leading-6 text-fg-muted">
-                {selectedRecord.transcription || 'No transcript available.'}
+                {selectedRecord.transcription ? <RedactedText text={selectedRecord.transcription} /> : 'No transcript available.'}
               </div>
             </div>
           </div>

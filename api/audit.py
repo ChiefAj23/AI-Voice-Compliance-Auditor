@@ -23,6 +23,7 @@ SKIP_PATHS = {
     "/api/auth/login",
     "/api/auth/change-password",
     "/api/auth/register",
+    "/api/privacy/purge",
     "/health",
     "/docs",
     "/openapi.json",

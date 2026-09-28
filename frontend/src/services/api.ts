@@ -1,4 +1,5 @@
 import axios from 'axios';
+import type { PiiSummary } from '../utils/pii';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
 
@@ -50,7 +51,10 @@ export interface AnalysisResult {
     emotion_confidence: number;
     toxicity_score: number;
     compliance_score: number;
+    /** What the redaction removed before analysis (absent when it is switched off). */
+    pii?: PiiSummary;
   };
+  privacy?: PiiSummary | null;
   explanation: any;
   enhanced_explanation: any;
   keyword_detection: any;
@@ -846,6 +850,28 @@ export interface AuditLogRecord {
   user_agent: string | null;
   details: Record<string, unknown> | null;
 }
+
+/** What the deployment redacts and keeps (GET /api/privacy). */
+export interface PrivacyPolicy {
+  pii_redaction: boolean;
+  redact_names: boolean;
+  /** Days an analysis is kept; 0 keeps it until someone deletes it. */
+  retention_days: number;
+  audit_retention_days: number;
+  recordings_stored: boolean;
+  last_purge: { at: string; analyses: number; audit_logs: number } | null;
+}
+
+export const privacyApi = {
+  policy: async (): Promise<PrivacyPolicy> => {
+    const response = await api.get('/api/privacy');
+    return response.data;
+  },
+  purge: async (): Promise<{ deleted: { analyses: number; audit_logs: number }; policy: PrivacyPolicy }> => {
+    const response = await api.post('/api/privacy/purge');
+    return response.data;
+  },
+};
 
 export const auditApi = {
   list: async (params: {

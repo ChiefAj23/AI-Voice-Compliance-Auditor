@@ -38,6 +38,7 @@ class AlertThresholds:
         self.emotion_negative = ["anger", "fear", "disgust", "sadness"]
         self.keyword_count_warning = 5   # Alert if too many keywords
         self.keyword_count_critical = 10
+        self.pii_sensitive = True        # Alert when card, SSN, CVV, PIN or IBAN details were spoken
 
     def to_dict(self) -> Dict:
         return {
@@ -48,7 +49,8 @@ class AlertThresholds:
             "sentiment_negative": self.sentiment_negative,
             "emotion_negative": self.emotion_negative,
             "keyword_count_warning": self.keyword_count_warning,
-            "keyword_count_critical": self.keyword_count_critical
+            "keyword_count_critical": self.keyword_count_critical,
+            "pii_sensitive": self.pii_sensitive,
         }
 
     @classmethod
@@ -71,6 +73,8 @@ class AlertThresholds:
             thresholds.keyword_count_warning = config["keyword_count_warning"]
         if "keyword_count_critical" in config:
             thresholds.keyword_count_critical = config["keyword_count_critical"]
+        if "pii_sensitive" in config:
+            thresholds.pii_sensitive = config["pii_sensitive"]
         return thresholds
 
 
@@ -172,6 +176,19 @@ def check_compliance_alerts(analysis: Dict, thresholds: Optional[AlertThresholds
                 value=float(keyword_count),
                 threshold=float(thresholds.keyword_count_warning)
             ))
+
+    # Payment or identity details spoken on the call (they were redacted from the transcript).
+    pii = analysis.get("pii") or {}
+    sensitive = pii.get("sensitive") or []
+    if thresholds.pii_sensitive and sensitive:
+        counts = pii.get("counts") or {}
+        alerts.append(Alert(
+            level="warning",
+            message="Sensitive details were spoken on this call: " + ", ".join(kind.replace("_", " ") for kind in sensitive),
+            metric="pii",
+            value=float(sum(counts.get(kind, 0) for kind in sensitive)),
+            threshold=0.0
+        ))
 
     return alerts
 

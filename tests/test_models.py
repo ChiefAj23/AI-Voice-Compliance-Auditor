@@ -71,3 +71,12 @@ def test_intent_is_classified():
     assert classifier is not None
     result = classifier(CALL, candidate_labels=["refund request", "technical support", "sales inquiry"])
     assert result["labels"][0] == "refund request"
+
+
+def test_person_names_are_redacted_when_enabled():
+    from api.pii import redact
+
+    text = "Hi, this is Sarah Johnson calling about my bill. My card is 4111 1111 1111 1111."
+    result = redact(text, names=True)
+    assert result.counts.get("name") == 1 and result.counts.get("card_number") == 1
+    assert "Sarah" not in result.text and "Johnson" not in result.text and "[NAME]" in result.text

@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Security
+- Personal data is redacted from transcripts before analysis, storage, exports, webhooks and emails: card numbers (Luhn-checked, or any long number after card words), SSNs, emails (also spoken), phone numbers, IBANs, account numbers, security codes, PINs, card expiry dates, dates of birth and long numbers; names are opt-in (`PII_REDACT_NAMES`). Counts are kept per analysis, and spoken payment or identity details raise an alert
+- Uploaded recordings are always deleted when their analysis ends; they used to stay on disk when an analysis failed
+- Retention: `RETENTION_DAYS` and `AUDIT_RETENTION_DAYS` (off by default) with a daily purge, an admin "run now" in Settings and `GET /api/privacy`; each purge is audited
 - No default admin password: the first admin comes from `ADMIN_PASSWORD`, or a random password printed once on first start (also after a full database reset)
 - No default JWT secret: without `JWT_SECRET_KEY` (or with the documented example value) a random key is used for that run
 - Every data route (analyses, history, exports, compliance rules, scheduled reports, webhooks, notification settings) now needs a signed-in user with the matching permission; webhooks, schedules and notification settings are admin-only

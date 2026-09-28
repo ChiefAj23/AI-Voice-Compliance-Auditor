@@ -104,6 +104,18 @@ Superusers hold every permission. A new account has none until an administrator 
 
 **Audit log.** Every request that changes something is recorded with the account, the path, the outcome and the client address (never the request body). Sign-ins, password changes and account creation get one explicit event each instead, successful or not, so refused attempts (a wrong password, a blocked registration) are in the log too. Read it at `GET /api/audit-logs` or on the Audit log page. Set `TRUST_PROXY_HEADERS=true` behind a reverse proxy so the address comes from `X-Forwarded-For`.
 
+**Personal data.** Straight after transcription, and before anything analyzes, stores or sends the transcript, `api/pii.py` replaces personal data with placeholders such as `[CARD]`, `[SSN]`, `[EMAIL]` and `[PHONE]`. It covers:
+- card numbers (Luhn-checked, or any 12 to 19 digits right after words such as "card" or "Visa", because speech-to-text drops and mishears digits)
+- Social Security numbers, emails (also spoken: "jane dot doe at example dot com"), phone numbers and IBANs
+- account numbers, security codes, PINs, card expiry dates and dates of birth when the words before them say so
+- any other run of nine or more digits
+
+Numbers read out as words are matched too. Each analysis keeps counts by type (`analysis.pii`), and a call where card, security-code, PIN, SSN or IBAN details were spoken raises an alert. Person names need a named-entity model (`dslim/bert-base-NER`), so they are opt-in with `PII_REDACT_NAMES=true`. The web app shows each placeholder as a labelled chip. Detection is pattern-based: it catches the common forms and every variant seen in testing, but speech-to-text output varies, so treat it as a strong safeguard, not a guarantee, and keep reviewing samples in high-risk deployments.
+
+**Recordings are never kept.** Each upload is deleted as soon as its analysis finishes or fails.
+
+**Retention.** `RETENTION_DAYS` deletes analyses (with their comments and tags) older than that many days, and `AUDIT_RETENTION_DAYS` does the same for the audit log. Both are off by default (0), so an upgrade never deletes anything. When either is set, a daily job applies them, and administrators can run it from Settings (`POST /api/privacy/purge`). Every run that deletes something is recorded as `retention.purge` in the audit log. `GET /api/privacy` reports the policy.
+
 **Rate limits.** `RATE_LIMIT_LOGIN` (10/minute per address) on sign-in, `RATE_LIMIT_ANALYZE` (30/minute) on analysis, `RATE_LIMIT_DEFAULT` (300/minute) elsewhere; over the limit returns 429.
 
 **Off by default.** Self-registration (`ALLOW_SELF_REGISTRATION`) and the database reset endpoint (`ALLOW_DB_RESET`).

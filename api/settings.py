@@ -82,4 +82,15 @@ TRUST_PROXY_HEADERS: bool = _bool("TRUST_PROXY_HEADERS", False)
 # Where the SQLite file lives (any SQLAlchemy URL works for the schema this app uses).
 DATABASE_URL: str = os.getenv("DATABASE_URL", "").strip()
 
+# Personal data. Transcripts are redacted (card numbers, SSNs, emails, phone numbers, ...) before
+# anything analyzes, stores or sends them. Person names need a named-entity model, so they are opt-in.
+PII_REDACTION: bool = _bool("PII_REDACTION", True)
+PII_REDACT_NAMES: bool = _bool("PII_REDACT_NAMES", False)
+
+# Retention, in days; 0 keeps data until someone deletes it. Off by default so an upgrade never
+# deletes anything by surprise. A daily job (and the admin "run now") removes older analyses and
+# audit log entries.
+RETENTION_DAYS: int = max(0, int(os.getenv("RETENTION_DAYS", "0") or 0))
+AUDIT_RETENTION_DAYS: int = max(0, int(os.getenv("AUDIT_RETENTION_DAYS", "0") or 0))
+
 APP_VERSION = "1.1.0"

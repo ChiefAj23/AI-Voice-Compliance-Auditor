@@ -4,6 +4,7 @@ import { Check, Save, Trash2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { usersApi } from '../services/api';
 import Logo from '../components/Logo';
+import PrivacySettings from '../components/PrivacySettings';
 import {
   Badge,
   Card,
@@ -270,6 +271,13 @@ export default function SettingsPage() {
               </button>
             </CardFooter>
           </Card>
+        </SettingsSection>
+
+        <SettingsSection
+          title="Privacy"
+          description="What happens to personal data in calls, and how long analyses and the audit log are kept."
+        >
+          <PrivacySettings />
         </SettingsSection>
 
         {/* Database reset - admin only */}
