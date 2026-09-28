@@ -70,18 +70,21 @@ class AnalysisRecord(Base):
 
     def to_dict(self):
         """Convert record to dictionary format"""
+        analysis = dict(self.full_analysis or {
+            "sentiment": self.sentiment,
+            "sentiment_confidence": self.sentiment_confidence,
+            "emotion": self.emotion,
+            "emotion_confidence": self.emotion_confidence,
+            "toxicity_score": self.toxicity_score,
+            "compliance_score": self.compliance_score
+        })
+        # Older records store the sentiment model's raw class names (LABEL_0/1/2) in their JSON.
+        analysis["sentiment"] = normalize_sentiment(analysis.get("sentiment"))
         return {
             "id": self.id,
             "filename": self.filename,
             "transcription": self.transcription,
-            "analysis": self.full_analysis or {
-                "sentiment": self.sentiment,
-                "sentiment_confidence": self.sentiment_confidence,
-                "emotion": self.emotion,
-                "emotion_confidence": self.emotion_confidence,
-                "toxicity_score": self.toxicity_score,
-                "compliance_score": self.compliance_score
-            },
+            "analysis": analysis,
             "explanation": self.explanation,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "file_duration": self.file_duration,
@@ -559,6 +562,7 @@ class AuditLog(Base):
 
 # Database location: DATABASE_URL when set, else the SQLite file under data/.
 from . import settings as _settings  # noqa: E402
+from .labels import RAW_SENTIMENT_LABELS, normalize_sentiment  # noqa: E402
 
 DB_DIR = Path(__file__).parent.parent / "data"
 DB_DIR.mkdir(exist_ok=True)
@@ -592,12 +596,11 @@ def init_db():
                 conn.execute(text('ALTER TABLE users ADD COLUMN password_changed_at DATETIME'))
             conn.commit()
 
-        user_columns = [col['name'] for col in inspector.get_columns('users')]
+        # Records analyzed before the sentiment model was relabelled hold its raw class names.
         with engine.connect() as conn:
-            if 'must_change_password' not in user_columns:
-                conn.execute(text('ALTER TABLE users ADD COLUMN must_change_password BOOLEAN NOT NULL DEFAULT 0'))
-            if 'password_changed_at' not in user_columns:
-                conn.execute(text('ALTER TABLE users ADD COLUMN password_changed_at DATETIME'))
+            for raw, word in RAW_SENTIMENT_LABELS.items():
+                conn.execute(text('UPDATE analysis_records SET sentiment = :word WHERE sentiment = :raw'),
+                             {"word": word, "raw": raw})
             conn.commit()
     except Exception as e:
         # Column might already exist or migration not needed

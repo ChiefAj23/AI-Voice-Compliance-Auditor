@@ -8,6 +8,7 @@ from collections import Counter
 # The toxicity model is shared with explain.py; sentiment and emotion with model.py. All of them
 # load on first use, once per process.
 from .explain import toxic_bert
+from .labels import SENTIMENT_WEIGHTS, normalize_sentiment
 from .model import emotion_pipeline as get_emotion_pipeline
 from .model import sentiment_pipeline as get_sentiment_pipeline
 
@@ -96,7 +97,7 @@ def explain_sentiment_contribution(text: str) -> Dict:
                 result = sentiment_pipeline(sentence)[0]
                 sentence_sentiments.append({
                     "sentence": sentence,
-                    "label": result["label"],
+                    "label": normalize_sentiment(result["label"]),
                     "score": result["score"]
                 })
             except:
@@ -157,18 +158,18 @@ def get_compliance_factors(analysis: Dict) -> Dict:
     """
     Explain compliance score by breaking down contributing factors
     """
-    sentiment = analysis.get("sentiment", "NEUTRAL")
+    sentiment = normalize_sentiment(analysis.get("sentiment") or "NEUTRAL")
     emotion = analysis.get("emotion", "neutral")
     toxicity = analysis.get("toxicity_score", 0)
     compliance = analysis.get("compliance_score", 0)
 
     # Define weights (matching model.py)
-    sentiment_weight = {"NEGATIVE": 0.6, "NEUTRAL": 0.9, "POSITIVE": 1.0}
+    sentiment_weight = SENTIMENT_WEIGHTS
     emotion_penalty = {"anger": 0.6, "fear": 0.8, "joy": 1.0, "calm": 1.0, "sadness": 0.8}
     toxicity_penalty = 1.0 - min(1.0, toxicity)
 
     # Calculate contributions
-    sentiment_contrib = sentiment_weight.get(sentiment.upper(), 1.0) * 100
+    sentiment_contrib = sentiment_weight.get(sentiment, 1.0) * 100
     emotion_contrib = emotion_penalty.get(emotion.lower(), 1.0) * 100
     toxicity_contrib = toxicity_penalty * 100
 

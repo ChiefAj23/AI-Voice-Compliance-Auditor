@@ -5,6 +5,8 @@ Monitors compliance scores and triggers alerts when thresholds are breached
 from typing import Dict, List, Optional
 from datetime import datetime
 
+from .labels import normalize_sentiment
+
 
 class Alert:
     """Alert class for compliance violations"""
@@ -133,7 +135,7 @@ def check_compliance_alerts(analysis: Dict, thresholds: Optional[AlertThresholds
         ))
 
     # Check sentiment
-    if thresholds.sentiment_negative and sentiment.upper() == "NEGATIVE":
+    if thresholds.sentiment_negative and normalize_sentiment(sentiment) == "NEGATIVE":
         alerts.append(Alert(
             level="warning",
             message=f"Negative sentiment detected in analysis",

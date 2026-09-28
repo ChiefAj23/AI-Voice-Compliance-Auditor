@@ -31,8 +31,8 @@ export function toxicityTone(ratio: number | null | undefined): Tone {
   return 'success';
 }
 
-// The backend's sentiment model (cardiffnlp/twitter-roberta-base-sentiment) answers LABEL_0,
-// LABEL_1 and LABEL_2 for negative, neutral and positive. Other labels pass through.
+// The API answers NEGATIVE, NEUTRAL and POSITIVE. The sentiment model's raw class names (LABEL_0,
+// LABEL_1, LABEL_2) are still mapped here in case one turns up from an old export. Other labels pass through.
 const SENTIMENT_LABELS: Record<string, string> = { label_0: 'negative', label_1: 'neutral', label_2: 'positive' };
 
 export function sentimentName(sentiment: string | null | undefined): string {

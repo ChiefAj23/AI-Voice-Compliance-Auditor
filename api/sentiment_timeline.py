@@ -4,6 +4,7 @@ Analyzes how sentiment, emotion, and compliance scores change over time in audio
 """
 from typing import Dict, List
 
+from .labels import SENTIMENT_WEIGHTS, normalize_sentiment
 # Shared with the whole-call analysis and loaded on first use, not when the API starts.
 from .model import emotion_pipeline, sentiment_pipeline
 
@@ -77,7 +78,7 @@ def analyze_segment_sentiment(text: str) -> Dict:
 
     try:
         result = sentiment_pipeline()(text)[0]
-        sentiment = result["label"].upper()
+        sentiment = normalize_sentiment(result["label"])
         confidence = round(result["score"], 3)
         # Normalize to -1 (negative) to 1 (positive) scale
         score = 1.0 if sentiment == "POSITIVE" else (-1.0 if sentiment == "NEGATIVE" else 0.0)
@@ -107,18 +108,17 @@ def analyze_segment_emotion(text: str) -> Dict:
 
 def calculate_segment_compliance(sentiment: Dict, emotion: Dict, toxicity_score: float = 0.0) -> float:
     """Calculate compliance score for a segment"""
-    sentiment_weight = {"NEGATIVE": 0.6, "NEUTRAL": 0.9, "POSITIVE": 1.0}
     emotion_penalty = {
         "anger": 0.6, "fear": 0.8, "joy": 1.0, "calm": 1.0, "sadness": 0.8,
         "disgust": 0.7, "surprise": 0.9, "neutral": 1.0
     }
     toxicity_penalty = 1.0 - min(1.0, toxicity_score)
 
-    sentiment_label = sentiment.get("sentiment", "NEUTRAL")
+    sentiment_label = normalize_sentiment(sentiment.get("sentiment") or "NEUTRAL")
     emotion_label = emotion.get("emotion", "neutral")
 
     raw_score = (
-        sentiment_weight.get(sentiment_label, 1.0) *
+        SENTIMENT_WEIGHTS.get(sentiment_label, 1.0) *
         emotion_penalty.get(emotion_label.lower(), 1.0) *
         toxicity_penalty
     )

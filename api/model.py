@@ -1,6 +1,8 @@
 """Sentiment, emotion and toxicity for a transcript, and the compliance score built from them."""
 from functools import lru_cache
 
+from .labels import SENTIMENT_LABELS, SENTIMENT_WEIGHTS, normalize_sentiment
+
 
 # Each model is loaded on first use rather than at import (tests and the API start fast), and once
 # per process: the timeline and the explanations share these instead of loading their own copies.
@@ -8,7 +10,12 @@ from functools import lru_cache
 def sentiment_pipeline():
     from transformers import pipeline
 
-    return pipeline("sentiment-analysis", model="cardiffnlp/twitter-roberta-base-sentiment")
+    pipe = pipeline("sentiment-analysis", model="cardiffnlp/twitter-roberta-base-sentiment")
+    # Answer NEGATIVE / NEUTRAL / POSITIVE rather than the model's own LABEL_0 / 1 / 2, which
+    # nothing downstream recognised: sentiment never moved a score, fired an alert or matched a rule.
+    pipe.model.config.id2label = dict(enumerate(SENTIMENT_LABELS))
+    pipe.model.config.label2id = {label: index for index, label in enumerate(SENTIMENT_LABELS)}
+    return pipe
 
 
 @lru_cache(maxsize=1)
@@ -27,7 +34,7 @@ def toxicity_model():
 
 def analyze_text(text: str):
     sentiment_result = sentiment_pipeline()(text)[0]
-    sentiment = sentiment_result["label"]
+    sentiment = normalize_sentiment(sentiment_result["label"])
     sentiment_conf = round(sentiment_result["score"], 3)
 
     emotion_result = emotion_pipeline()(text)[0]
@@ -37,12 +44,11 @@ def analyze_text(text: str):
     tox = toxicity_model().predict(text)
     toxicity_score = round(float(tox.get("toxicity", 0.0)), 3)
 
-    sentiment_weight = {"NEGATIVE": 0.6, "NEUTRAL": 0.9, "POSITIVE": 1.0}
     emotion_penalty = {"anger": 0.6, "fear": 0.8, "joy": 1.0, "calm": 1.0, "sadness": 0.8}
     toxicity_penalty = 1.0 - min(1.0, toxicity_score)
 
     raw_score = (
-        sentiment_weight.get(sentiment.upper(), 1.0)
+        SENTIMENT_WEIGHTS.get(sentiment, 1.0)
         * emotion_penalty.get(emotion.lower(), 1.0)
         * toxicity_penalty
     )
