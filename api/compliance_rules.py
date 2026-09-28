@@ -7,6 +7,7 @@ import re
 from datetime import datetime
 from sqlalchemy.orm import Session
 from .database import ComplianceRule
+from .labels import normalize_sentiment
 from .safe_eval import UnsafeExpression, safe_eval
 
 # The names a custom rule can use; _evaluate_custom supplies their values.
@@ -198,13 +199,14 @@ class ComplianceRuleEngine:
 
     def _evaluate_sentiment(self, rule: ComplianceRule, analysis: Dict) -> tuple:
         """Evaluate sentiment-based rule"""
-        sentiment = analysis.get("sentiment", "NEUTRAL")
-        sentiment_lower = sentiment.upper()
+        # Either side may use the model's raw names (LABEL_0) or the words (negative).
+        sentiment = normalize_sentiment(analysis.get("sentiment") or "NEUTRAL")
+        sentiment_lower = sentiment
 
         if not rule.pattern:
             return False, None, "No sentiment pattern specified"
 
-        target_sentiment = rule.pattern.strip().upper()
+        target_sentiment = normalize_sentiment(rule.pattern.strip())
 
         if rule.condition == "equals":
             matched = sentiment_lower == target_sentiment

@@ -45,6 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - JWT secret key now reads from environment variable `JWT_SECRET_KEY`
 
 ### Fixed
+- Sentiment now counts. The model answers LABEL_0/1/2, but the score, the timeline, negative-sentiment alerts and sentiment rules all expected NEGATIVE/NEUTRAL/POSITIVE, so sentiment never changed a score, raised an alert or matched a rule. The model is relabelled when it loads, and stored records are migrated. Scores change as designed: neutral calls weigh 0.9 and negative calls 0.6; existing records keep their scores until re-analyzed
 - Fixed bcrypt/passlib version compatibility issues
 - Fixed user deletion endpoint bug
 - Fixed database reset functionality

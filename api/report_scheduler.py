@@ -216,12 +216,8 @@ class ReportScheduler:
             record = records[0]
             return {
                 "filename": record.filename or "N/A",
-                "analysis": record.full_analysis or {
-                    "sentiment": record.sentiment,
-                    "emotion": record.emotion,
-                    "toxicity_score": record.toxicity_score,
-                    "compliance_score": record.compliance_score
-                },
+                # to_dict() also reads older records' raw sentiment labels as words.
+                "analysis": record.to_dict()["analysis"],
                 "explanation": record.explanation or [],
                 "duration": record.file_duration
             }

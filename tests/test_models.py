@@ -33,6 +33,18 @@ def test_whole_call_is_scored():
     assert 0 <= result["toxicity_score"] <= 1
 
 
+def test_sentiment_uses_words_and_moves_the_score():
+    from api.model import analyze_text
+    from api.sentiment_timeline import analyze_segment_sentiment
+
+    angry = "This is the worst service I have ever had. I am furious and I want to cancel everything right now."
+    happy = "Thank you so much, that was wonderful help and I really appreciate how quickly you fixed it."
+    negative, positive = analyze_text(angry), analyze_text(happy)
+    assert negative["sentiment"] == "NEGATIVE" and positive["sentiment"] == "POSITIVE"
+    assert negative["compliance_score"] < positive["compliance_score"]
+    assert analyze_segment_sentiment(angry)["score"] < 0 < analyze_segment_sentiment(happy)["score"]
+
+
 def test_toxicity_is_explained_token_by_token():
     from api.explain import explain_toxicity
 
