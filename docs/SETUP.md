@@ -12,7 +12,7 @@ This guide will help you get the AI Voice Compliance Auditor up and running quic
 ## Step 1: Clone the Repository
 
 ```bash
-git clone https://github.com/chiefaj/voice_audit.git
+git clone https://github.com/ChiefAj23/AI-Voice-Compliance-Auditor.git
 cd voice_audit
 ```
 

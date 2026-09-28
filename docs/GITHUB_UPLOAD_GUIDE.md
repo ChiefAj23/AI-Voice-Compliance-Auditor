@@ -78,7 +78,7 @@ git commit -m "Initial commit: AI Voice Compliance Auditor
 
 ```bash
 # Add remote repository
-git remote add origin https://github.com/chiefaj/voice_audit.git
+git remote add origin https://github.com/ChiefAj23/AI-Voice-Compliance-Auditor.git
 
 # Verify remote
 git remote -v
@@ -188,7 +188,7 @@ git add .
 git commit -m "Your commit message"
 
 # Add remote
-git remote add origin https://github.com/chiefaj/voice_audit.git
+git remote add origin https://github.com/ChiefAj23/AI-Voice-Compliance-Auditor.git
 
 # Push
 git push -u origin main
@@ -201,7 +201,7 @@ git push -u origin main
 ### "Remote origin already exists"
 ```bash
 git remote remove origin
-git remote add origin https://github.com/chiefaj/voice_audit.git
+git remote add origin https://github.com/ChiefAj23/AI-Voice-Compliance-Auditor.git
 ```
 
 ### "Authentication failed"

@@ -133,7 +133,7 @@ See `SETUP.md` for detailed instructions.
 **Abhijeet Solanki**
 
 - Full-stack developer specializing in AI/ML applications
-- GitHub: [@chiefaj](https://github.com/chiefaj)
+- GitHub: [@ChiefAj23](https://github.com/ChiefAj23)
 
 ---
 
