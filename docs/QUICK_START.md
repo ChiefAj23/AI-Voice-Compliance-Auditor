@@ -14,7 +14,7 @@ Get the AI Voice Compliance Auditor up and running in 5 minutes!
 
 ```bash
 # Clone repository
-git clone https://github.com/chiefaj/voice_audit.git
+git clone https://github.com/ChiefAj23/AI-Voice-Compliance-Auditor.git
 cd voice_audit
 
 # Backend setup
@@ -69,5 +69,5 @@ Change the password after signing in.
 
 ---
 
-**Need Help?** Open an issue on [GitHub](https://github.com/chiefaj/voice_audit/issues)
+**Need Help?** Open an issue on [GitHub](https://github.com/ChiefAj23/AI-Voice-Compliance-Auditor/issues)
 

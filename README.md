@@ -5,12 +5,12 @@
 **AI-Powered Voice Conversation Analysis & Compliance Monitoring System**
 
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-green.svg)](https://fastapi.tiangolo.com/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.141+-green.svg)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/React-18.2+-61DAFB.svg)](https://reactjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.2+-3178C6.svg)](https://www.typescriptlang.org/)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**Developed with ❤️ by [Abhijeet Solanki](https://github.com/chiefaj)**
+**Designed, architected and built by [Abhijeet Solanki](https://abhijeetsolanki.com)**
 
 [Features](#-features) • [Installation](#-installation) • [Quick Start](#-quick-start) • [Documentation](#-documentation) • [Screenshots](#-screenshots)
 
@@ -184,7 +184,7 @@ Before you begin, ensure you have the following installed:
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/chiefaj/voice_audit.git
+git clone https://github.com/ChiefAj23/AI-Voice-Compliance-Auditor.git
 cd voice_audit
 ```
 
@@ -363,7 +363,7 @@ After analysis, you'll see:
 - **Action Items** - Detected tasks and commitments
 - **Topics** - Main topics discussed
 - **Intent** - Conversation intent classification
-- **Summary** - AI-generated summary
+- **Summary** - A short summary of the call
 - **Alerts** - Compliance violations and warnings
 
 ### 4. Add Comments & Tags
@@ -571,13 +571,12 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ---
 
-## 👨‍💻 Developer
+## 👨‍💻 Author
 
-**Abhijeet Solanki**
+**Abhijeet Solanki** designed, architected and built Voice Compliance Auditor end to end: the models, the API and the web app.
 
-- Developed with ❤️ and dedication
-- Full-stack developer specializing in AI/ML applications
-- Contact: [GitHub Profile](https://github.com/chiefaj)
+- Website: [abhijeetsolanki.com](https://abhijeetsolanki.com) ([case study](https://abhijeetsolanki.com/portfolio/voice-auditor))
+- GitHub: [@ChiefAj23](https://github.com/ChiefAj23)
 
 ---
 
@@ -587,7 +586,6 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - **Hugging Face** - Transformers library and models
 - **FastAPI** - Modern Python web framework
 - **React Team** - Amazing UI library
-- All open-source contributors
 
 ---
 
@@ -595,7 +593,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 For issues, questions, or contributions:
 
-- Open an issue on [GitHub](https://github.com/chiefaj/voice_audit/issues)
+- Open an issue on [GitHub](https://github.com/ChiefAj23/AI-Voice-Compliance-Auditor/issues)
 - Check the [documentation](docs/README.md) for guides and tutorials
 - Review the API documentation at `http://127.0.0.1:8000/docs` when server is running
 
@@ -603,7 +601,7 @@ For issues, questions, or contributions:
 
 <div align="center">
 
-**Made with ❤️ by Abhijeet Solanki**
+**Designed, architected and built by Abhijeet Solanki**
 
 ⭐ Star this repo if you find it useful!
 

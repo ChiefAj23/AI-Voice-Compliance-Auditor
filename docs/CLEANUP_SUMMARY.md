@@ -120,7 +120,7 @@ git commit -m "Initial commit: AI Voice Compliance Auditor
 - Comprehensive compliance monitoring features"
 
 # 5. Create repository on GitHub, then:
-git remote add origin https://github.com/chiefaj/voice_audit.git
+git remote add origin https://github.com/ChiefAj23/AI-Voice-Compliance-Auditor.git
 git branch -M main
 git push -u origin main
 ```
