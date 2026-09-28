@@ -26,7 +26,7 @@ from .alert_system import check_compliance_alerts, AlertThresholds, generate_ale
 from .multilanguage import transcribe_with_language, detect_language_from_text, get_supported_languages
 from .speaker_diarization import simple_speaker_segmentation, analyze_speaker_turns, create_speaker_timeline
 from .conversation_analysis import calculate_conversation_metrics
-from .compliance_rules import ComplianceRuleEngine
+from .compliance_rules import RULE_VARIABLES, ComplianceRuleEngine
 from .database import ComplianceRule, ScheduledReport, Webhook, NotificationConfig
 from .action_items import detect_action_items
 from .report_scheduler import get_scheduler
@@ -38,7 +38,8 @@ from .email_notification import get_email_service
 from .auth import (
     authenticate_user, create_access_token, get_current_user, get_current_active_user,
     get_password_hash, get_user_permissions, require_permission, require_role,
-    init_default_roles_and_permissions, ACCESS_TOKEN_EXPIRE_MINUTES, get_optional_user
+    init_default_roles_and_permissions, ACCESS_TOKEN_EXPIRE_MINUTES, get_optional_user,
+    ensure_admin_user
 )
 from .database import (
     User, Role, Permission, Comment, Tag, Team,
@@ -48,7 +49,6 @@ from pydantic import BaseModel, EmailStr
 from typing import Optional as Opt
 import json
 import re
-import secrets
 import traceback
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -101,32 +101,6 @@ app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(AuditMiddleware)
 
 
-def bootstrap_admin(db) -> None:
-    """The first administrator, once: password from ADMIN_INITIAL_PASSWORD or generated and printed once."""
-    if db.query(User).filter(User.username == settings.ADMIN_USERNAME).first():
-        return
-    generated = not settings.ADMIN_INITIAL_PASSWORD
-    password = settings.ADMIN_INITIAL_PASSWORD or secrets.token_urlsafe(12)
-    admin_user = User(
-        username=settings.ADMIN_USERNAME,
-        email=settings.ADMIN_EMAIL,
-        hashed_password=get_password_hash(password),
-        full_name="Administrator",
-        is_active=True,
-        is_superuser=True,
-        must_change_password=True,
-    )
-    admin_role = db.query(Role).filter(Role.name == "admin").first()
-    if admin_role:
-        admin_user.roles.append(admin_role)
-    db.add(admin_user)
-    db.commit()
-    if generated:
-        print(f"First administrator created: username '{settings.ADMIN_USERNAME}', one-time password '{password}'. Change it at the first sign-in.")
-    else:
-        print(f"First administrator '{settings.ADMIN_USERNAME}' created from ADMIN_INITIAL_PASSWORD; it must be changed at the first sign-in.")
-
-
 def _validate_rule_pattern(rule_type, pattern) -> None:
     """Reject a rule whose pattern would fail or is not allowed, at save time rather than at analysis time."""
     if pattern is None:
@@ -138,7 +112,7 @@ def _validate_rule_pattern(rule_type, pattern) -> None:
             raise HTTPException(status_code=400, detail=f"Invalid regular expression: {e}")
     if rule_type == "custom":
         try:
-            validate_expression(pattern)
+            validate_expression(pattern, RULE_VARIABLES)
         except UnsafeExpression as e:
             raise HTTPException(status_code=400, detail=f"Rule expression not allowed: {e}")
 
@@ -152,7 +126,8 @@ async def startup_event():
     try:
         init_default_roles_and_permissions(db)
 
-        bootstrap_admin(db)
+        # The first admin account: ADMIN_PASSWORD, or a generated password printed once.
+        ensure_admin_user(db)
 
         # Initialize scheduler and load all active schedules
         scheduler = get_scheduler()
@@ -393,8 +368,8 @@ async def analyze_audio(
 
 
 @app.get("/supported_languages")
-async def get_supported_languages_endpoint(_actor: User = Depends(require_permission("analysis:read"))):
-    """Get list of supported languages"""
+async def get_supported_languages_endpoint():
+    """Get list of supported languages (public: the sign-in screen may need it)"""
     try:
         languages = get_supported_languages()
         return languages
@@ -514,7 +489,6 @@ async def get_history(
     filename: Optional[str] = None,
     db: Session = Depends(get_db),
     _actor: User = Depends(require_permission("analysis:read")),
-
 ):
     """Get analysis history with filtering"""
     try:
@@ -594,7 +568,6 @@ async def get_statistics(
     days: int = Query(30, ge=1, le=365),
     db: Session = Depends(get_db),
     _actor: User = Depends(require_permission("analysis:read")),
-
 ):
     """Get statistics and trends"""
     try:
@@ -698,7 +671,6 @@ async def export_csv(
     filename: Optional[str] = None,
     db: Session = Depends(get_db),
     _actor: User = Depends(require_permission("analysis:read")),
-
 ):
     """Export analysis history as CSV"""
     try:
@@ -776,7 +748,6 @@ async def export_json_all(
     filename: Optional[str] = None,
     db: Session = Depends(get_db),
     _actor: User = Depends(require_permission("analysis:read")),
-
 ):
     """Export all analysis records as JSON array"""
     try:
@@ -935,7 +906,6 @@ async def get_compliance_rules(
     is_active: Opt[bool] = None,
     db: Session = Depends(get_db),
     _actor: User = Depends(require_permission("compliance:read")),
-
 ):
     """Get all compliance rules with optional filters"""
     try:
@@ -1065,7 +1035,6 @@ async def test_compliance_rule(
     analysis: Opt[dict] = None,
     db: Session = Depends(get_db),
     _actor: User = Depends(require_permission("compliance:write")),
-
 ):
     """Test a compliance rule against sample text"""
     try:
@@ -1124,7 +1093,6 @@ async def get_scheduled_reports(
     is_active: Opt[bool] = None,
     db: Session = Depends(get_db),
     _actor: User = Depends(require_permission("integration:read")),
-
 ):
     """Get all scheduled reports with optional filters"""
     try:
@@ -1205,7 +1173,6 @@ async def update_scheduled_report(
     report_data: ScheduledReportUpdate,
     db: Session = Depends(get_db),
     _actor: User = Depends(require_permission("integration:write")),
-
 ):
     """Update an existing scheduled report"""
     try:
@@ -1326,7 +1293,6 @@ async def get_webhooks(
     is_active: Opt[bool] = None,
     db: Session = Depends(get_db),
     _actor: User = Depends(require_permission("integration:read")),
-
 ):
     """Get all webhooks with optional filters"""
     try:
@@ -1406,7 +1372,6 @@ async def update_webhook(
     webhook_data: WebhookUpdate,
     db: Session = Depends(get_db),
     _actor: User = Depends(require_permission("integration:write")),
-
 ):
     """Update an existing webhook"""
     try:
@@ -1506,7 +1471,6 @@ async def get_notification_configs(
     is_active: Opt[bool] = None,
     db: Session = Depends(get_db),
     _actor: User = Depends(require_permission("integration:read")),
-
 ):
     """Get all notification configs"""
     try:
@@ -1538,7 +1502,6 @@ async def create_notification_config(
     config_data: NotificationConfigCreate,
     db: Session = Depends(get_db),
     _actor: User = Depends(require_permission("integration:write")),
-
 ):
     """Create a new notification config"""
     try:
@@ -1579,7 +1542,6 @@ async def update_notification_config(
     config_data: NotificationConfigUpdate,
     db: Session = Depends(get_db),
     _actor: User = Depends(require_permission("integration:write")),
-
 ):
     """Update an existing notification config"""
     try:
@@ -1737,7 +1699,11 @@ async def register(
     db: Session = Depends(get_db),
     actor: Optional[User] = Depends(get_optional_user),
 ):
-    """Create a user. Self-registration is off unless ALLOW_SELF_REGISTRATION is set; otherwise user:write is needed."""
+    """
+    Create a user. Self-registration is off unless ALLOW_SELF_REGISTRATION is set; otherwise user:write
+    is needed. The account starts with no role, so it can't see or change anything until an
+    administrator assigns one on the Users page.
+    """
     def refuse(status_code: int, detail: str):
         audit_record(db, action="user.create", request=request, user=actor, resource_type="users", status="failure",
                      details={"username": user_data.username, "reason": detail})
@@ -1769,10 +1735,8 @@ async def register(
         is_superuser=False
     )
 
-    # Assign default "viewer" role
-    viewer_role = db.query(Role).filter(Role.name == "viewer").first()
-    if viewer_role:
-        user.roles.append(viewer_role)
+    # No role yet: an administrator grants access (viewer, analyst or admin) on the Users page.
+    # Handing every sign-up the viewer role let anyone on the internet read every call.
     # An account made by an administrator starts with a password its owner must replace.
     user.must_change_password = actor is not None and actor.username != user.username
 
@@ -1994,9 +1958,8 @@ async def reset_database(
             try:
                 init_default_roles_and_permissions(new_db)
 
-                # Create default admin user
-                from .auth import get_password_hash
-                bootstrap_admin(new_db)
+                # Re-create the admin account (ADMIN_PASSWORD, or a generated one in the log)
+                ensure_admin_user(new_db)
             finally:
                 new_db.close()
         else:

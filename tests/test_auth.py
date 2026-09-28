@@ -4,7 +4,10 @@ import re
 from api.main import app
 
 # Routes anyone may call without signing in. Everything else must reject an anonymous request.
-PUBLIC = {("GET", "/health"), ("GET", "/api/auth/config"), ("POST", "/api/auth/login"), ("POST", "/api/auth/register")}
+PUBLIC = {
+    ("GET", "/health"), ("GET", "/api/auth/config"), ("POST", "/api/auth/login"), ("POST", "/api/auth/register"),
+    ("GET", "/supported_languages"),
+}
 
 
 def _sample_path(path: str) -> str:

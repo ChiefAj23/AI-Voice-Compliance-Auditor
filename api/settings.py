@@ -4,6 +4,9 @@ Runtime configuration, read once from the environment.
 Every secret and every deployment-specific value lives here, so a container or a server can be
 configured without touching code. In production (APP_ENV=production) the JWT secret is required;
 in development a random one is generated per process, which signs everyone out on restart.
+
+The first administrator (ADMIN_USERNAME, ADMIN_PASSWORD, ADMIN_EMAIL) is read when the account
+is created, by api.auth.ensure_admin_user.
 """
 import os
 import secrets
@@ -21,31 +24,39 @@ def _bool(name: str, default: bool) -> bool:
     return value.strip().lower() in ("1", "true", "yes", "on")
 
 
-def _secret() -> str:
+# Example values from the docs and .env.example. Anyone can read them, so they are never used.
+PLACEHOLDER_SECRETS = {
+    "your-secret-key-change-in-production",
+    "your-very-secure-secret-key-here",
+    "your-very-secure-secret-key-here-change-in-production",
+}
+
+
+def load_secret_key() -> str:
+    """
+    The key that signs sign-in tokens: JWT_SECRET_KEY, or, outside production, a random key for
+    this run. There is no built-in default: a default printed in a public repo would let anyone
+    sign a token for any user.
+    """
     value = os.getenv("JWT_SECRET_KEY", "").strip()
-    if value and value != "your-secret-key-change-in-production":
+    if value and value not in PLACEHOLDER_SECRETS:
         if len(value) < 32:
             warnings.warn("JWT_SECRET_KEY is shorter than 32 characters; use a longer random value.", stacklevel=2)
         return value
     if IS_PRODUCTION:
         raise RuntimeError("JWT_SECRET_KEY must be set in production (for example: openssl rand -hex 32)")
-    warnings.warn(
-        "JWT_SECRET_KEY is not set: using a random secret for this process, so sessions end when the server restarts.",
-        stacklevel=2,
+    print(
+        "WARNING: JWT_SECRET_KEY is not set (or is the example value). Using a random key for this run, "
+        "so everyone is signed out when the server restarts. Set JWT_SECRET_KEY, for example with: "
+        "openssl rand -hex 32",
+        flush=True,
     )
     return secrets.token_hex(32)
 
 
-JWT_SECRET_KEY: str = _secret()
+JWT_SECRET_KEY: str = load_secret_key()
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
-
-# The first administrator. The password comes from the environment; when it is not set, a random
-# one is generated at first start and printed once. Either way the account must change it at the
-# first login.
-ADMIN_USERNAME: str = os.getenv("ADMIN_USERNAME", "admin").strip() or "admin"
-ADMIN_EMAIL: str = os.getenv("ADMIN_EMAIL", "admin@example.com").strip() or "admin@example.com"
-ADMIN_INITIAL_PASSWORD: str = os.getenv("ADMIN_INITIAL_PASSWORD", "").strip()
 
 # New accounts: by default only an administrator creates them.
 ALLOW_SELF_REGISTRATION: bool = _bool("ALLOW_SELF_REGISTRATION", False)

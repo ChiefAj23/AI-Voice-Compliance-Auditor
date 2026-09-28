@@ -255,6 +255,7 @@ function UserMenu() {
 export default function Layout({ children }: LayoutProps) {
   const location = useLocation();
   const { theme, toggleTheme } = useTheme();
+  const { hasPermission } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const current = findCurrent(location.pathname);
 
@@ -316,9 +317,11 @@ export default function Layout({ children }: LayoutProps) {
               label={theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme'}
               onClick={toggleTheme}
             />
-            <Link to="/notifications" className="btn btn-ghost btn-icon" aria-label="Notifications" title="Notifications">
-              <Bell />
-            </Link>
+            {hasPermission('integration:read') && (
+              <Link to="/notifications" className="btn btn-ghost btn-icon" aria-label="Notifications" title="Notifications">
+                <Bell />
+              </Link>
+            )}
             <div className="mx-2 h-5 w-px bg-line" aria-hidden="true" />
             <UserMenu />
           </div>

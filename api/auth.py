@@ -2,6 +2,8 @@
 Authentication and authorization module
 Handles JWT tokens, password hashing, and role-based access control
 """
+import os
+import secrets
 from datetime import datetime, timedelta
 from typing import Optional, List
 import jwt
@@ -260,7 +262,8 @@ def init_default_roles_and_permissions(db: Session):
         {
             "name": "analyst",
             "description": "Can view and create analyses",
-            "permissions": ["analysis:read", "analysis:write", "compliance:read", "integration:read"]
+            # Webhooks, schedules and notification settings hold URLs and credentials: admins only.
+            "permissions": ["analysis:read", "analysis:write", "compliance:read"]
         },
         {
             "name": "viewer",
@@ -289,3 +292,50 @@ def init_default_roles_and_permissions(db: Session):
 
         db.commit()
 
+
+def ensure_admin_user(db: Session) -> Optional[str]:
+    """Create the first admin account if it doesn't exist yet.
+
+    The username is ADMIN_USERNAME (default "admin") and the password is ADMIN_PASSWORD. With no
+    ADMIN_PASSWORD, a random password is generated and printed once to the server log. There is
+    no shared default password, and either way the account must choose its own password at the
+    first sign-in. Returns the generated password, if one was generated.
+    """
+    username = os.getenv("ADMIN_USERNAME", "admin").strip() or "admin"
+    if db.query(User).filter(User.username == username).first():
+        return None
+
+    password = os.getenv("ADMIN_PASSWORD", "")
+    generated = None
+    if not password:
+        generated = password = secrets.token_urlsafe(12)
+
+    admin_user = User(
+        username=username,
+        # Per username, so renaming the admin later doesn't collide with the first one's email.
+        email=os.getenv("ADMIN_EMAIL", "").strip() or f"{username}@example.com",
+        hashed_password=get_password_hash(password),
+        full_name="Administrator",
+        is_active=True,
+        is_superuser=True,
+        must_change_password=True,
+    )
+    db.add(admin_user)
+    admin_role = db.query(Role).filter(Role.name == "admin").first()
+    if admin_role:
+        admin_user.roles.append(admin_role)
+    db.commit()
+
+    if generated:
+        print(
+            f"Created the admin account '{username}' with a generated password: {generated}\n"
+            "Sign in with it to choose a new one, or set ADMIN_PASSWORD before the first start.",
+            flush=True,
+        )
+    else:
+        print(
+            f"Created the admin account '{username}' with the password from ADMIN_PASSWORD; "
+            "it must be changed at the first sign-in.",
+            flush=True,
+        )
+    return generated

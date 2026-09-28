@@ -101,7 +101,7 @@ voice_audit/
 - FastAPI, Uvicorn
 - Whisper, Transformers
 - SQLAlchemy, APScheduler
-- bcrypt, python-jose
+- bcrypt, PyJWT
 - scikit-learn, pandas
 - And 20+ more packages
 

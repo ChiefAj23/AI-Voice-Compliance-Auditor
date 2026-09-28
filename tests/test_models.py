@@ -9,7 +9,13 @@ import os
 
 import pytest
 
-pytestmark = pytest.mark.skipif(not os.getenv("RUN_MODEL_TESTS"), reason="set RUN_MODEL_TESTS=1 to load the models")
+from api import model
+
+pytestmark = [
+    pytest.mark.skipif(not os.getenv("RUN_MODEL_TESTS"), reason="set RUN_MODEL_TESTS=1 to load the models"),
+    # Without the ML libraries, conftest.py stubs the model modules out.
+    pytest.mark.skipif(not getattr(model, "__file__", None), reason="needs the ML libraries: pip install -r requirements.txt"),
+]
 
 CALL = (
     "Thanks for calling, this call may be recorded for quality. I can see the charge on your account "

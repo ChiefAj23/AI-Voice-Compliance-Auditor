@@ -1,4 +1,4 @@
-pytest==9.1.1
-httpx==0.28.1
+# Everything CI uses on top of requirements.txt: the test tools, the linter and the dependency audit.
+-r requirements-test.txt
 ruff==0.16.9
-pip-audit
+pip-audit==2.10.1

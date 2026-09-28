@@ -62,11 +62,11 @@ SMTP_PASSWORD=your-app-password
 
 ### Initialize Database
 
-The database is automatically created on first run. The default admin user will be created:
-- Username: `admin`
-- Password: `admin123`
+The database is created on the first run, along with the admin account:
+- Username: `admin` (or `ADMIN_USERNAME`)
+- Password: `ADMIN_PASSWORD`, or the random password the API prints once in its console output on the first start
 
-**⚠️ Change this password immediately after first login!**
+There is no default password. Change it after signing in.
 
 ## Step 3: Frontend Setup
 
@@ -100,10 +100,8 @@ Frontend will run on: `http://localhost:5173`
 ## Step 5: Access the Application
 
 1. Open your browser to `http://localhost:5173`
-2. Login with default credentials:
-   - Username: `admin`
-   - Password: `admin123`
-3. **Change your password immediately** in Settings
+2. Sign in as `admin` with `ADMIN_PASSWORD`, or the random password the API prints once in its console output on the first start
+3. Change your password in Settings
 
 ## Troubleshooting
 

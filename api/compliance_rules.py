@@ -7,6 +7,10 @@ import re
 from datetime import datetime
 from sqlalchemy.orm import Session
 from .database import ComplianceRule
+from .safe_eval import UnsafeExpression, safe_eval
+
+# The names a custom rule can use; _evaluate_custom supplies their values.
+RULE_VARIABLES = ("text", "analysis", "sentiment", "toxicity_score", "compliance_score", "emotion")
 
 
 class RuleResult:
@@ -274,29 +278,23 @@ class ComplianceRuleEngine:
         return matched, value, message
 
     def _evaluate_custom(self, rule: ComplianceRule, text: str, analysis: Dict) -> tuple:
-        """Evaluate custom rule using Python expression"""
+        """Evaluate a custom rule expression with the safe evaluator (never eval())."""
         if not rule.pattern:
             return False, None, "No custom expression specified"
 
-        # A small allow-listed expression language (api/safe_eval.py), never eval().
-        from .safe_eval import UnsafeExpression, safe_eval
-
         try:
-            context = {
+            # The names a rule can use. Functions such as len() and text methods such as
+            # .lower() come from api/safe_eval.py, which refuses anything else.
+            variables = {
                 "text": text,
                 "analysis": analysis,
                 "sentiment": analysis.get("sentiment", ""),
                 "toxicity_score": analysis.get("toxicity_score", 0.0),
                 "compliance_score": analysis.get("compliance_score", 100.0),
                 "emotion": analysis.get("emotion", ""),
-                "len": len,
-                "str": str,
-                "float": float,
-                "int": int,
-                "bool": bool
             }
 
-            result = safe_eval(rule.pattern, context)
+            result = safe_eval(rule.pattern, variables)
             matched = bool(result)
 
             value = result

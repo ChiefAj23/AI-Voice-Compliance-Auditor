@@ -53,13 +53,18 @@ export default function UsersPage() {
         password: createData.password,
         full_name: createData.full_name.trim() || undefined,
       });
+      // New accounts start with no role, so the chosen one is always assigned here.
       const role = roles.find((r) => r.name === createData.role);
-      if (role && createData.role !== 'viewer') {
+      if (role) {
         await api.post(`/api/users/${created.id}/roles`, { role_id: role.id });
       }
       setCreatedNote(`${created.username} can sign in with the temporary password and will be asked to choose a new one.`);
       setCreateData({ username: '', email: '', full_name: '', password: '', role: 'viewer' });
-      toast.success('User created', `${created.username} was added${role && createData.role !== 'viewer' ? ` as ${humanize(role.name)}` : ''}.`);
+      if (role) {
+        toast.success('User created', `${created.username} was added as ${humanize(role.name)}.`);
+      } else {
+        toast.warning('User created without a role', `Give ${created.username} a role with Manage roles; until then the account can't see anything.`);
+      }
       await loadUsers();
     } catch (error) {
       toast.error('Could not create the user', errorDetail(error) || 'Check the details and try again.');
