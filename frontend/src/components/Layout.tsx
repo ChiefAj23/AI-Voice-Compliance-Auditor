@@ -9,11 +9,13 @@ import {
   ChevronRight,
   GitCompare,
   History,
+  KeyRound,
   Layers,
   LogOut,
   Menu,
   Mic,
   Moon,
+  ScrollText,
   Settings,
   ShieldCheck,
   Sun,
@@ -38,43 +40,46 @@ interface NavItem {
   name: string;
   href: string;
   icon: LucideIcon;
+  /** The permission that unlocks the page; items without one are for everyone signed in. */
+  permission?: string;
 }
 
 const navigation: { label: string; items: NavItem[] }[] = [
   {
     label: 'Analyze',
     items: [
-      { name: 'New analysis', href: '/', icon: Mic },
-      { name: 'Batch processing', href: '/batch', icon: Layers },
+      { name: 'New analysis', href: '/', icon: Mic, permission: 'analysis:write' },
+      { name: 'Batch processing', href: '/batch', icon: Layers, permission: 'analysis:write' },
     ],
   },
   {
     label: 'Review',
     items: [
-      { name: 'History', href: '/history', icon: History },
-      { name: 'Statistics', href: '/statistics', icon: BarChart3 },
-      { name: 'Compare', href: '/compare', icon: GitCompare },
+      { name: 'History', href: '/history', icon: History, permission: 'analysis:read' },
+      { name: 'Statistics', href: '/statistics', icon: BarChart3, permission: 'analysis:read' },
+      { name: 'Compare', href: '/compare', icon: GitCompare, permission: 'analysis:read' },
     ],
   },
   {
     label: 'Governance',
     items: [
-      { name: 'Compliance rules', href: '/compliance-rules', icon: ShieldCheck },
-      { name: 'Scheduled reports', href: '/scheduled-reports', icon: CalendarClock },
+      { name: 'Compliance rules', href: '/compliance-rules', icon: ShieldCheck, permission: 'compliance:read' },
+      { name: 'Scheduled reports', href: '/scheduled-reports', icon: CalendarClock, permission: 'integration:read' },
     ],
   },
   {
     label: 'Integrations',
     items: [
-      { name: 'Webhooks', href: '/webhooks', icon: Webhook },
-      { name: 'Notifications', href: '/notifications', icon: Bell },
+      { name: 'Webhooks', href: '/webhooks', icon: Webhook, permission: 'integration:read' },
+      { name: 'Notifications', href: '/notifications', icon: Bell, permission: 'integration:read' },
     ],
   },
   {
     label: 'Administration',
     items: [
-      { name: 'Teams', href: '/teams', icon: Users },
-      { name: 'Users', href: '/users', icon: UserCog },
+      { name: 'Teams', href: '/teams', icon: Users, permission: 'user:read' },
+      { name: 'Users', href: '/users', icon: UserCog, permission: 'user:read' },
+      { name: 'Audit log', href: '/audit-log', icon: ScrollText, permission: 'audit:read' },
       { name: 'Settings', href: '/settings', icon: Settings },
     ],
   },
@@ -91,6 +96,10 @@ function findCurrent(pathname: string) {
 }
 
 function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
+  const { hasPermission } = useAuth();
+  const visible = navigation
+    .map((group) => ({ ...group, items: group.items.filter((item) => !item.permission || hasPermission(item.permission)) }))
+    .filter((group) => group.items.length > 0);
   return (
     <div className="flex h-full flex-col">
       <div className="flex h-14 shrink-0 items-center gap-2.5 border-b border-line px-4">
@@ -99,7 +108,7 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       </div>
 
       <nav aria-label="Main" className="flex-1 space-y-5 overflow-y-auto px-3 py-4">
-        {navigation.map((group) => (
+        {visible.map((group) => (
           <div key={group.label}>
             <p className="eyebrow px-2.5 pb-1.5">{group.label}</p>
             <ul className="space-y-0.5">
@@ -219,6 +228,15 @@ function UserMenu() {
             <Settings className="h-4 w-4" aria-hidden="true" />
             Settings
           </Link>
+          <Link
+            to="/change-password"
+            role="menuitem"
+            onClick={() => setOpen(false)}
+            className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-fg-muted transition-colors hover:bg-surface-subtle hover:text-fg"
+          >
+            <KeyRound className="h-4 w-4" aria-hidden="true" />
+            Change password
+          </Link>
           <button
             type="button"
             role="menuitem"
@@ -237,6 +255,7 @@ function UserMenu() {
 export default function Layout({ children }: LayoutProps) {
   const location = useLocation();
   const { theme, toggleTheme } = useTheme();
+  const { hasPermission } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const current = findCurrent(location.pathname);
 
@@ -298,9 +317,11 @@ export default function Layout({ children }: LayoutProps) {
               label={theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme'}
               onClick={toggleTheme}
             />
-            <Link to="/notifications" className="btn btn-ghost btn-icon" aria-label="Notifications" title="Notifications">
-              <Bell />
-            </Link>
+            {hasPermission('integration:read') && (
+              <Link to="/notifications" className="btn btn-ghost btn-icon" aria-label="Notifications" title="Notifications">
+                <Bell />
+              </Link>
+            )}
             <div className="mx-2 h-5 w-px bg-line" aria-hidden="true" />
             <UserMenu />
           </div>

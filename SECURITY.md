@@ -21,7 +21,7 @@ We will respond to security reports within 48 hours and work on a fix as quickly
 
 ### For Users
 
-1. **Set the first admin password**: Set `ADMIN_PASSWORD` before the first start, or use the generated one printed in the API's console output, then change it
+1. **Set the first admin password**: Set `ADMIN_PASSWORD` before the first start, or use the generated one printed in the API's console output. Either way you choose a new one at the first sign-in
 2. **Use Environment Variables**: Never commit secrets, API keys, or passwords to version control
 3. **Keep Dependencies Updated**: Regularly update dependencies to get security patches
 4. **Use HTTPS**: Always use HTTPS in production
@@ -39,10 +39,13 @@ We will respond to security reports within 48 hours and work on a fix as quickly
 
 ## Known Security Considerations
 
-- **Admin password**: There is no default. It comes from `ADMIN_PASSWORD` or is generated on first start
-- **JWT secret key**: There is no default. Without `JWT_SECRET_KEY`, a random key is used for each run
-- **Access control**: Every data route needs a signed-in user with the matching permission. New sign-ups have no role until an admin assigns one
-- **Custom rules**: Expressions are checked by `api/safe_eval.py` (comparisons, and/or/not, arithmetic, a few functions and text methods), never passed to `eval()`
+- **Admin password**: There is no default. It comes from `ADMIN_PASSWORD` or is generated on first start, and must be replaced at the first sign-in (so must the temporary password of every account an admin creates)
+- **JWT secret key**: There is no default, and the published example values are refused. In production (`APP_ENV=production`) the API will not start without `JWT_SECRET_KEY`; elsewhere a random key is used for each run
+- **Access control**: Every data route needs a signed-in user with the matching permission. Self-registration is off by default, and a new account has no role until an admin assigns one
+- **Audit log**: Every change, sign-in, password change and account creation is recorded with the account, outcome and client address (never request bodies)
+- **Rate limits**: Sign-in, analysis and all other routes are rate limited per client address
+- **Dependencies**: Pinned in `requirements.txt` and audited with `pip-audit` in CI
+- **Custom rules**: Expressions are interpreted by `api/safe_eval.py` (comparisons, and/or/not, arithmetic, a few functions and text methods), never passed to `eval()`, and checked when a rule is saved
 - **Database**: SQLite is used for development; consider PostgreSQL for production
 - **Email Passwords**: Use App Passwords for Gmail SMTP authentication
 - **File Uploads**: Validate file types and sizes for audio uploads

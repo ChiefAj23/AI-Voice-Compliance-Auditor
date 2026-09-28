@@ -5,7 +5,6 @@ Identifies and separates different speakers in audio
 from typing import Dict, List, Optional
 import numpy as np
 import librosa
-from datetime import timedelta
 
 
 def simple_speaker_segmentation(audio_path: str, num_speakers: Optional[int] = None) -> Dict:

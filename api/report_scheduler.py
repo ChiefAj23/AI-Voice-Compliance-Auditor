@@ -2,12 +2,10 @@
 Automated Report Scheduling Module
 Handles scheduled report generation and email delivery
 """
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
-from apscheduler.triggers.date import DateTrigger
-from apscheduler.triggers.interval import IntervalTrigger
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -16,10 +14,8 @@ from email import encoders
 import os
 from pathlib import Path
 from sqlalchemy.orm import Session
-from .database import ScheduledReport, AnalysisRecord, get_db
+from .database import ScheduledReport, AnalysisRecord
 from .report import generate_compliance_pdf
-from sqlalchemy import and_, func
-import json
 import traceback
 
 

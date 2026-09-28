@@ -6,11 +6,13 @@ import type { User } from '../services/api';
 interface AuthContextType {
   user: User | null;
   loading: boolean;
-  login: (username: string, password: string) => Promise<void>;
+  login: (username: string, password: string) => Promise<User>;
   logout: () => void;
   register: (username: string, email: string, password: string, fullName?: string) => Promise<void>;
   refreshUser: () => Promise<void>;
   isAuthenticated: boolean;
+  /** Whether the signed-in user holds a permission (superusers hold them all). */
+  hasPermission: (permission: string) => boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -54,7 +56,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     await authApi.login({ username, password });
     const userData = await authApi.getCurrentUser();
     setUser(userData);
+    return userData;
   };
+
+  const hasPermission = (permission: string) =>
+    !!user && (user.is_superuser || (user.permissions ?? []).includes(permission));
 
   const logout = () => {
     authApi.logout();
@@ -85,6 +91,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     register,
     refreshUser,
     isAuthenticated: !!user && authApi.isAuthenticated(),
+    hasPermission,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

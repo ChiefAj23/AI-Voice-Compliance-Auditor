@@ -1,15 +1,20 @@
-# The security tests stub the ML models, so they only need the web stack.
-fastapi
-httpx
-pytest
-sqlalchemy
-python-jose[cryptography]
-bcrypt
-pydantic
-email-validator
-python-multipart
-apscheduler
-numpy
-requests
-fpdf2
-python-dateutil
+# The security tests stub the ML models (see tests/conftest.py), so they only need the web stack:
+#   pip install -r requirements-test.txt && pytest
+# Versions match requirements.txt.
+fastapi==0.141.1
+starlette==1.7.0
+pydantic==2.12.4
+python-multipart==0.0.32
+email-validator==2.3.0
+PyJWT==2.15.0
+bcrypt==5.0.0
+slowapi==0.1.10
+limits==5.8.0
+SQLAlchemy==2.0.44
+APScheduler==3.11.1
+python-dateutil==2.9.0.post0
+requests==2.34.2
+numpy==2.3.4
+fpdf2==2.8.5
+pytest==9.1.1
+httpx==0.28.1

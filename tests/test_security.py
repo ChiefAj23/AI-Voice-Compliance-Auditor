@@ -1,6 +1,5 @@
 """Security checks: no default credentials, sign-in on every data route, safe custom rules."""
 import pytest
-from fastapi.testclient import TestClient
 
 from api.safe_eval import UnsafeExpression, safe_eval
 
@@ -53,13 +52,6 @@ def test_custom_rules_cannot_reach_python(expression):
         safe_eval(expression, VARIABLES)
 
 
-@pytest.fixture(scope="session")
-def client():
-    from api.main import app
-    with TestClient(app) as c:
-        yield c
-
-
 def sign_in(client, username, password):
     r = client.post("/api/auth/login", json={"username": username, "password": password})
     assert r.status_code == 200, r.text
@@ -67,8 +59,9 @@ def sign_in(client, username, password):
 
 
 @pytest.fixture(scope="session")
-def admin(client):
-    return sign_in(client, "admin", "test-admin-password")
+def admin(admin_headers):
+    # The first admin, after its first-sign-in password change (see conftest.py).
+    return admin_headers
 
 
 def test_there_is_no_default_admin_password(client):
@@ -77,13 +70,21 @@ def test_there_is_no_default_admin_password(client):
 
 
 def test_the_secret_key_is_never_a_published_example(monkeypatch):
-    import api.auth as auth
+    from api import settings
     monkeypatch.setenv("JWT_SECRET_KEY", "your-very-secure-secret-key-here-change-in-production")
-    assert auth._load_secret_key() not in auth._PLACEHOLDER_SECRETS
+    assert settings.load_secret_key() not in settings.PLACEHOLDER_SECRETS
     monkeypatch.delenv("JWT_SECRET_KEY")
-    key = auth._load_secret_key()
-    assert len(key) == 64 and key not in auth._PLACEHOLDER_SECRETS
-    assert auth._load_secret_key() != key  # random each time, not a constant
+    key = settings.load_secret_key()
+    assert len(key) == 64 and key not in settings.PLACEHOLDER_SECRETS
+    assert settings.load_secret_key() != key  # random each time, not a constant
+
+
+def test_production_refuses_to_start_without_a_secret(monkeypatch):
+    from api import settings
+    monkeypatch.setattr(settings, "IS_PRODUCTION", True)
+    monkeypatch.delenv("JWT_SECRET_KEY")
+    with pytest.raises(RuntimeError):
+        settings.load_secret_key()
 
 
 def test_a_generated_admin_password_signs_in(client, monkeypatch):
@@ -119,7 +120,10 @@ def test_public_routes_stay_public(client):
     assert client.get("/supported_languages").status_code == 200
 
 
-def test_a_new_account_sees_nothing_until_an_admin_grants_a_role(client, admin):
+def test_a_new_account_sees_nothing_until_an_admin_grants_a_role(client, admin, monkeypatch):
+    # Self-registration is off by default; a deployment that turns it on still hands out no access.
+    from api import settings
+    monkeypatch.setattr(settings, "ALLOW_SELF_REGISTRATION", True)
     r = client.post("/api/auth/register", json={
         "username": "newcomer", "email": "newcomer@example.com", "password": "a-long-password",
     })
@@ -144,11 +148,8 @@ def test_a_custom_rule_cannot_escape_through_the_api(client, admin):
     rule = {"name": "escape attempt", "rule_type": "custom", "condition": "custom",
             "pattern": "().__class__.__bases__[0].__subclasses__()"}
     r = client.post("/compliance_rules", json=rule, headers=admin)
-    assert r.status_code == 200, r.text
-    result = client.post(f"/compliance_rules/{r.json()['id']}/test", params={"text": "hello"}, headers=admin)
-    assert result.status_code == 200, result.text
-    body = result.json()
-    assert body["matched"] is False and "not allowed" in (body["message"] or "")
+    assert r.status_code == 400, r.text  # refused when saved, before it can ever run
+    assert "not allowed" in r.json()["detail"]
 
     ok = {"name": "angry and toxic", "rule_type": "custom", "condition": "custom",
           "pattern": 'toxicity_score > 0.7 and "refund" in text.lower()'}

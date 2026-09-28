@@ -3,20 +3,9 @@ Sentiment Timeline Analysis Module
 Analyzes how sentiment, emotion, and compliance scores change over time in audio
 """
 from typing import Dict, List
-from transformers import pipeline
-from datetime import timedelta
-import re
 
-# Initialize pipelines (reuse if already initialized)
-try:
-    sentiment_pipeline = pipeline("sentiment-analysis", model="cardiffnlp/twitter-roberta-base-sentiment")
-except:
-    sentiment_pipeline = None
-
-try:
-    emotion_pipeline = pipeline("text-classification", model="SamLowe/roberta-base-go_emotions")
-except:
-    emotion_pipeline = None
+# Shared with the whole-call analysis and loaded on first use, not when the API starts.
+from .model import emotion_pipeline, sentiment_pipeline
 
 
 def segment_text_by_time(whisper_result: Dict, segment_duration: float = 10.0) -> List[Dict]:
@@ -83,11 +72,11 @@ def segment_text_by_time(whisper_result: Dict, segment_duration: float = 10.0) -
 
 def analyze_segment_sentiment(text: str) -> Dict:
     """Analyze sentiment for a text segment"""
-    if not sentiment_pipeline or not text.strip():
+    if not text.strip():
         return {"sentiment": "NEUTRAL", "confidence": 0.5, "score": 0.0}
 
     try:
-        result = sentiment_pipeline(text)[0]
+        result = sentiment_pipeline()(text)[0]
         sentiment = result["label"].upper()
         confidence = round(result["score"], 3)
         # Normalize to -1 (negative) to 1 (positive) scale
@@ -103,11 +92,11 @@ def analyze_segment_sentiment(text: str) -> Dict:
 
 def analyze_segment_emotion(text: str) -> Dict:
     """Analyze emotion for a text segment"""
-    if not emotion_pipeline or not text.strip():
+    if not text.strip():
         return {"emotion": "neutral", "confidence": 0.5}
 
     try:
-        result = emotion_pipeline(text)[0]
+        result = emotion_pipeline()(text)[0]
         return {
             "emotion": result["label"],
             "confidence": round(result["score"], 3)

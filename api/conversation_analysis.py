@@ -2,9 +2,7 @@
 Advanced Conversation Analysis Module
 Analyzes conversation patterns, turn-taking, interruptions, and dialogue flow
 """
-from typing import Dict, List, Optional
-from datetime import timedelta
-import re
+from typing import Dict, List
 
 
 def analyze_turn_taking(segments: List[Dict]) -> Dict:

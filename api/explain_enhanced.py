@@ -1,32 +1,16 @@
 import shap
 import numpy as np
 import torch
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, pipeline
 import re
-from typing import Dict, List, Tuple
+from typing import Dict
 from collections import Counter
 
-# Models for explainability
-MODEL_NAME = "unitary/toxic-bert"
-tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-toxicity_model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME)
-toxicity_model.eval()
+# The toxicity model is shared with explain.py; sentiment and emotion with model.py. All of them
+# load on first use, once per process.
+from .explain import toxic_bert
+from .model import emotion_pipeline as get_emotion_pipeline
+from .model import sentiment_pipeline as get_sentiment_pipeline
 
-# Initialize pipelines for sentiment and emotion (lazy loading to avoid import conflicts)
-_sentiment_pipeline = None
-_emotion_pipeline = None
-
-def get_sentiment_pipeline():
-    global _sentiment_pipeline
-    if _sentiment_pipeline is None:
-        _sentiment_pipeline = pipeline("sentiment-analysis", model="cardiffnlp/twitter-roberta-base-sentiment")
-    return _sentiment_pipeline
-
-def get_emotion_pipeline():
-    global _emotion_pipeline
-    if _emotion_pipeline is None:
-        _emotion_pipeline = pipeline("text-classification", model="SamLowe/roberta-base-go_emotions")
-    return _emotion_pipeline
 
 def explain_toxicity_enhanced(text: str, max_tokens: int = 128):
     """
@@ -35,6 +19,7 @@ def explain_toxicity_enhanced(text: str, max_tokens: int = 128):
     """
     if not isinstance(text, str):
         text = str(text)
+    tokenizer, toxicity_model = toxic_bert()
 
     def predict(batch_texts):
         if isinstance(batch_texts, np.ndarray):

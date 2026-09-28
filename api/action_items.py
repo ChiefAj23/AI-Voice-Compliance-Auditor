@@ -2,11 +2,10 @@
 Action Items & Commitments Detection Module
 Extracts tasks, deadlines, follow-ups, and commitments from conversations
 """
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional
 import re
 from datetime import datetime, timedelta
 from dateutil.parser import parse as parse_date
-import calendar
 
 
 class ActionItem:

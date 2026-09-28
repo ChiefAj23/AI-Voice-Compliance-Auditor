@@ -3,17 +3,16 @@ Audio quality metrics module
 """
 import numpy as np
 import librosa
-import soundfile as sf
-from typing import Dict, Optional, Any
-import tempfile
+from typing import Dict, Any
 import os
 
 
 def _to_native_type(value: Any) -> Any:
     """Convert numpy types to native Python types"""
-    if isinstance(value, (np.integer, np.int_, np.intc, np.intp, np.int8, np.int16, np.int32, np.int64)):
+    # np.integer and np.floating cover every width (np.float_ no longer exists in NumPy 2).
+    if isinstance(value, np.integer):
         return int(value)
-    elif isinstance(value, (np.floating, np.float_, np.float16, np.float32, np.float64)):
+    elif isinstance(value, np.floating):
         return float(value)
     elif isinstance(value, np.bool_):
         return bool(value)

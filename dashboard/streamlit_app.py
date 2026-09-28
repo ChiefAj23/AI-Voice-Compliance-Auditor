@@ -54,7 +54,10 @@ with st.sidebar:
                     )
                 except requests.RequestException:
                     login = None
-                if login is not None and login.ok:
+                if login is not None and login.ok and login.json().get("must_change_password"):
+                    # The API refuses everything else until the first or temporary password is replaced.
+                    st.warning("This account still has its first or temporary password. Set a new one in the web app, then sign in here.")
+                elif login is not None and login.ok:
                     st.session_state.api_token = login.json()["access_token"]
                     st.session_state.api_user = username
                     st.rerun()

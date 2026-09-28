@@ -2,7 +2,6 @@ from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, 
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime as dt
-import os
 from pathlib import Path
 
 # Database setup
@@ -333,6 +332,9 @@ class User(Base):
     full_name = Column(String, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     is_superuser = Column(Boolean, default=False, nullable=False)
+    # Set on the first administrator and on admin-issued passwords: nothing but a password change works until it is cleared.
+    must_change_password = Column(Boolean, default=False, nullable=False)
+    password_changed_at = Column(DateTime, nullable=True)
 
     # Metadata
     created_at = Column(DateTime, default=dt.utcnow, nullable=False)
@@ -354,6 +356,7 @@ class User(Base):
             "full_name": self.full_name,
             "is_active": self.is_active,
             "is_superuser": self.is_superuser,
+            "must_change_password": bool(self.must_change_password),
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "last_login": self.last_login.isoformat() if self.last_login else None,
@@ -522,13 +525,47 @@ class Team(Base):
         }
 
 
-# Database file path
+class AuditLog(Base):
+    """Who did what, when, from where. Written by api.audit; read with the audit:read permission."""
+    __tablename__ = "audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    timestamp = Column(DateTime, default=dt.utcnow, nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    username = Column(String, nullable=True, index=True)
+    action = Column(String, nullable=False, index=True)
+    resource_type = Column(String, nullable=True, index=True)
+    resource_id = Column(String, nullable=True)
+    status = Column(String, default="success", nullable=False)
+    ip_address = Column(String, nullable=True)
+    user_agent = Column(String, nullable=True)
+    details = Column(JSON, nullable=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "timestamp": self.timestamp.isoformat() if self.timestamp else None,
+            "user_id": self.user_id,
+            "username": self.username,
+            "action": self.action,
+            "resource_type": self.resource_type,
+            "resource_id": self.resource_id,
+            "status": self.status,
+            "ip_address": self.ip_address,
+            "user_agent": self.user_agent,
+            "details": self.details,
+        }
+
+
+# Database location: DATABASE_URL when set, else the SQLite file under data/.
+from . import settings as _settings  # noqa: E402
+
 DB_DIR = Path(__file__).parent.parent / "data"
 DB_DIR.mkdir(exist_ok=True)
-DATABASE_URL = f"sqlite:///{DB_DIR / 'analyses.db'}"
+DATABASE_URL = _settings.DATABASE_URL or f"sqlite:///{DB_DIR / 'analyses.db'}"
 
 # Create engine and session
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def init_db():
@@ -546,6 +583,22 @@ def init_db():
                 conn.execute(text('ALTER TABLE analysis_records ADD COLUMN created_by_user_id INTEGER'))
                 conn.commit()
                 print("✅ Added created_by_user_id column to analysis_records")
+
+        user_columns = [col['name'] for col in inspector.get_columns('users')]
+        with engine.connect() as conn:
+            if 'must_change_password' not in user_columns:
+                conn.execute(text('ALTER TABLE users ADD COLUMN must_change_password BOOLEAN NOT NULL DEFAULT 0'))
+            if 'password_changed_at' not in user_columns:
+                conn.execute(text('ALTER TABLE users ADD COLUMN password_changed_at DATETIME'))
+            conn.commit()
+
+        user_columns = [col['name'] for col in inspector.get_columns('users')]
+        with engine.connect() as conn:
+            if 'must_change_password' not in user_columns:
+                conn.execute(text('ALTER TABLE users ADD COLUMN must_change_password BOOLEAN NOT NULL DEFAULT 0'))
+            if 'password_changed_at' not in user_columns:
+                conn.execute(text('ALTER TABLE users ADD COLUMN password_changed_at DATETIME'))
+            conn.commit()
     except Exception as e:
         # Column might already exist or migration not needed
         print(f"Note: Migration check: {str(e)}")

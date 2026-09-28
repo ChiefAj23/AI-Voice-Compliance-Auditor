@@ -6,13 +6,20 @@ used to go through Python's eval(), which even with empty builtins can reach Pyt
 through attributes (``().__class__...``). This walks the parsed expression instead and allows
 only what a rule needs: comparisons, and/or/not, arithmetic, the rule's variables, a few pure
 functions and read-only string and dict methods.
+
+validate() checks a rule when it is saved, so its author hears about a mistake straight away
+rather than when a call is scored. It looks at every part of the expression, including branches
+a particular evaluation would skip. safe_eval() runs the same checks again, then evaluates.
 """
 import ast
 import operator
-from typing import Any, Callable, Dict
+import re
+from typing import Any, Callable, Dict, Iterable, Optional
 
 MAX_EXPRESSION_LENGTH = 1000
+MAX_NODES = 250  # parsed parts in one expression
 MAX_RESULT_LENGTH = 100_000  # longest string or list an expression may build
+MAX_PATTERN_LENGTH = 300  # longest regular expression matches() accepts
 
 _BIN_OPS: Dict[type, Callable[[Any, Any], Any]] = {
     ast.Add: operator.add,
@@ -34,6 +41,35 @@ _CMP_OPS: Dict[type, Callable[[Any, Any], bool]] = {
     ast.Is: operator.is_,
     ast.IsNot: operator.is_not,
 }
+class UnsafeExpression(ValueError):
+    """The expression uses something custom rules don't allow."""
+
+
+def _contains(text: Any, phrase: Any) -> bool:
+    """Case-insensitive: contains(text, "refund")."""
+    return str(phrase).lower() in str(text).lower()
+
+
+def _matches(text: Any, pattern: Any) -> bool:
+    """Case-insensitive regular expression search: matches(text, r"\\bguarantee(d|s)?\\b")."""
+    pattern = str(pattern)
+    if len(pattern) > MAX_PATTERN_LENGTH:
+        raise UnsafeExpression(f"The regular expression is longer than {MAX_PATTERN_LENGTH} characters")
+    try:
+        return re.search(pattern, str(text), re.IGNORECASE) is not None
+    except re.error as e:
+        raise UnsafeExpression(f"Invalid regular expression: {e}") from None
+
+
+def _count(text: Any, phrase: Any) -> int:
+    """Case-insensitive number of occurrences: count(text, "sorry")."""
+    return str(text).lower().count(str(phrase).lower())
+
+
+def _word_count(text: Any) -> int:
+    return len(str(text).split())
+
+
 _FUNCTIONS: Dict[str, Callable[..., Any]] = {
     "len": len,
     "str": str,
@@ -46,6 +82,10 @@ _FUNCTIONS: Dict[str, Callable[..., Any]] = {
     "round": round,
     "any": any,
     "all": all,
+    "contains": _contains,
+    "matches": _matches,
+    "count": _count,
+    "word_count": _word_count,
 }
 _STR_METHODS = {
     "lower", "upper", "strip", "lstrip", "rstrip", "startswith", "endswith", "count", "find",
@@ -53,14 +93,21 @@ _STR_METHODS = {
 }
 _DICT_METHODS = {"get", "keys", "values", "items"}
 _LIST_METHODS = {"count", "index"}
+_METHODS = _STR_METHODS | _DICT_METHODS | _LIST_METHODS
+_CONSTANT_NAMES = {"True", "False", "None"}
+_ALLOWED_NODES = (
+    ast.Expression, ast.Constant, ast.Name, ast.Load, ast.List, ast.Tuple, ast.Set, ast.BoolOp,
+    ast.And, ast.Or, ast.UnaryOp, ast.Not, ast.USub, ast.UAdd, ast.BinOp, ast.Compare, ast.IfExp,
+    ast.Subscript, ast.Slice, ast.Call, ast.Attribute,
+) + tuple(_BIN_OPS) + tuple(_CMP_OPS)
 
 
-class UnsafeExpression(ValueError):
-    """The expression uses something custom rules don't allow."""
-
-
-def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
-    """Evaluate a custom rule expression against ``variables`` without eval()."""
+def validate(expression: str, names: Optional[Iterable[str]] = None) -> ast.Expression:
+    """
+    Check an expression without evaluating it and return its parsed form; raises
+    UnsafeExpression with the reason. With ``names`` (the variables a rule can use), an unknown
+    name is reported too.
+    """
     if not isinstance(expression, str) or not expression.strip():
         raise UnsafeExpression("The expression is empty")
     if len(expression) > MAX_EXPRESSION_LENGTH:
@@ -69,6 +116,51 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
         tree = ast.parse(expression.strip(), mode="eval")
     except SyntaxError as e:
         raise UnsafeExpression(f"Syntax error: {e.msg}") from None
+
+    known = None if names is None else set(names) | set(_FUNCTIONS) | _CONSTANT_NAMES
+    nodes = list(ast.walk(tree))
+    if len(nodes) > MAX_NODES:
+        raise UnsafeExpression(f"The expression has more than {MAX_NODES} parts")
+    called = {id(node.func) for node in nodes if isinstance(node, ast.Call)}
+    for node in nodes:
+        _check_node(node, known, called)
+    return tree
+
+
+def _check_node(node: ast.AST, known: Optional[set], called: set) -> None:
+    if not isinstance(node, _ALLOWED_NODES):
+        raise UnsafeExpression(f"'{type(node).__name__}' is not allowed in a custom rule")
+    if isinstance(node, ast.Constant) and not isinstance(node.value, (str, int, float, bool, type(None))):
+        raise UnsafeExpression("Only text, numbers, True, False and None are allowed as values")
+    if isinstance(node, ast.Name):
+        if node.id.startswith("_"):
+            raise UnsafeExpression(f"'{node.id}' is not allowed")
+        if known is not None and node.id not in known:
+            raise UnsafeExpression(f"Unknown name '{node.id}'")
+    if isinstance(node, ast.Attribute) and id(node) not in called:
+        raise UnsafeExpression(f"'.{node.attr}' is not allowed (call a text or dictionary method instead)")
+    if isinstance(node, ast.Call):
+        if node.keywords:
+            raise UnsafeExpression("Keyword arguments are not allowed")
+        if isinstance(node.func, ast.Name):
+            if node.func.id not in _FUNCTIONS:
+                raise UnsafeExpression(f"'{node.func.id}' can't be called")
+        elif isinstance(node.func, ast.Attribute):
+            if node.func.attr.startswith("_") or node.func.attr not in _METHODS:
+                raise UnsafeExpression(f"'.{node.func.attr}()' is not allowed")
+        else:
+            raise UnsafeExpression("Only plain function and method calls are allowed")
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mult):
+        for side in (node.left, node.right):
+            if isinstance(side, (ast.List, ast.Tuple)) or (isinstance(side, ast.Constant) and isinstance(side.value, str)):
+                raise UnsafeExpression("Repeating text or lists with * is not allowed")
+    if isinstance(node, ast.Slice) and node.step is not None:
+        raise UnsafeExpression("Slice steps are not allowed")
+
+
+def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
+    """Evaluate a custom rule expression against ``variables`` without eval()."""
+    tree = validate(expression)
     return _Evaluator(variables).visit(tree.body)
 
 

@@ -161,7 +161,7 @@ All tables are automatically created when the application starts.
 ## 🔧 Dependencies Added
 
 Added to `requirements.txt`:
-- `python-jose[cryptography]` - JWT token handling
+- `PyJWT` - JWT token handling (replaced python-jose)
 - `passlib[bcrypt]` - Password hashing
 - `python-multipart` - Form data handling
 

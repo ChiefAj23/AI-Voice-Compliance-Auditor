@@ -18,14 +18,24 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Add response interceptor to handle auth errors
+// Session handling: a 401 ends the session; a 403 for a pending password change sends the user to set one.
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    const status = error.response?.status;
+    const detail = error.response?.data?.detail;
+    if (status === 401) {
       localStorage.removeItem('auth_token');
       localStorage.removeItem('user');
-      window.location.href = '/login';
+      if (window.location.pathname !== '/login') window.location.href = '/login';
+    } else if (
+      status === 403 &&
+      detail &&
+      typeof detail === 'object' &&
+      detail.code === 'password_change_required' &&
+      window.location.pathname !== '/change-password'
+    ) {
+      window.location.href = '/change-password';
     }
     return Promise.reject(error);
   }
@@ -524,6 +534,9 @@ export interface User {
   is_superuser: boolean;
   roles: string[];
   teams: string[];
+  /** True until the account's owner has replaced an administrator-issued password. */
+  must_change_password?: boolean;
+  permissions?: string[];
 }
 
 export interface LoginRequest {
@@ -541,6 +554,12 @@ export interface RegisterRequest {
 export interface AuthResponse {
   access_token: string;
   token_type: string;
+  must_change_password?: boolean;
+}
+
+export interface AuthConfig {
+  allow_self_registration: boolean;
+  min_password_length: number;
 }
 
 export const authApi = {
@@ -574,6 +593,16 @@ export const authApi = {
   getStoredUser: (): User | null => {
     const userStr = localStorage.getItem('user');
     return userStr ? JSON.parse(userStr) : null;
+  },
+
+  changePassword: async (body: { current_password: string; new_password: string }): Promise<void> => {
+    await api.post('/api/auth/change-password', body);
+  },
+
+  /** What the sign-in screens may show before anyone is signed in. */
+  getConfig: async (): Promise<AuthConfig> => {
+    const response = await api.get('/api/auth/config');
+    return response.data;
   },
 };
 
@@ -800,3 +829,35 @@ export const teamsApi = {
 
 export default api;
 
+// ============================================================================
+// Audit log
+// ============================================================================
+
+export interface AuditLogRecord {
+  id: number;
+  timestamp: string;
+  user_id: number | null;
+  username: string | null;
+  action: string;
+  resource_type: string | null;
+  resource_id: string | null;
+  status: 'success' | 'failure';
+  ip_address: string | null;
+  user_agent: string | null;
+  details: Record<string, unknown> | null;
+}
+
+export const auditApi = {
+  list: async (params: {
+    skip?: number;
+    limit?: number;
+    username?: string;
+    action?: string;
+    status?: string;
+    date_from?: string;
+    date_to?: string;
+  }): Promise<{ total: number; skip: number; limit: number; records: AuditLogRecord[] }> => {
+    const response = await api.get('/api/audit-logs', { params });
+    return response.data;
+  },
+};
