@@ -20,6 +20,7 @@ import { useChartTheme } from '../utils/chart';
 import ComplianceGauge from './ComplianceGauge';
 import SentimentTimeline from './SentimentTimeline';
 import AudioPlayer from './AudioPlayer';
+import { PrivacyNote, RedactedText } from './RedactedText';
 import Comments from './Comments';
 import Tags from './Tags';
 import { Badge, Card, CardBody, CardHeader, EmptyState, Tabs, useToast } from './ui';
@@ -516,9 +517,10 @@ export default function AnalysisResults({ result, audioFile }: AnalysisResultsPr
               </button>
             }
           />
-          <CardBody>
+          <CardBody className="space-y-4">
+            <PrivacyNote privacy={result.privacy ?? result.analysis?.pii} />
             <p className="whitespace-pre-wrap text-sm leading-7 text-fg-muted">
-              {result.transcription || 'No transcript was produced.'}
+              {result.transcription ? <RedactedText text={result.transcription} /> : 'No transcript was produced.'}
             </p>
           </CardBody>
         </Card>

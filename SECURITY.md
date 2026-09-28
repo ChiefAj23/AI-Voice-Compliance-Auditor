@@ -46,6 +46,8 @@ We will respond to security reports within 48 hours and work on a fix as quickly
 - **Rate limits**: Sign-in, analysis and all other routes are rate limited per client address
 - **Dependencies**: Pinned in `requirements.txt` and audited with `pip-audit` in CI
 - **Custom rules**: Expressions are interpreted by `api/safe_eval.py` (comparisons, and/or/not, arithmetic, a few functions and text methods), never passed to `eval()`, and checked when a rule is saved
+- **Personal data**: Card numbers, SSNs, emails, phone numbers, account numbers, security codes and dates of birth are replaced in transcripts before analysis, storage and notifications (names are opt-in). Detection is pattern-based and strong, but not a guarantee against every speech-to-text variant
+- **Recordings and retention**: Uploaded audio is deleted as soon as its analysis ends. `RETENTION_DAYS` and `AUDIT_RETENTION_DAYS` bound how long analyses and audit entries are kept
 - **Database**: SQLite is used for development; consider PostgreSQL for production
 - **Email Passwords**: Use App Passwords for Gmail SMTP authentication
 - **File Uploads**: Validate file types and sizes for audio uploads

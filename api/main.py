@@ -27,6 +27,8 @@ from .multilanguage import transcribe_with_language, detect_language_from_text, 
 from .speaker_diarization import simple_speaker_segmentation, analyze_speaker_turns, create_speaker_timeline
 from .conversation_analysis import calculate_conversation_metrics
 from .compliance_rules import RULE_VARIABLES, ComplianceRuleEngine
+from .pii import redact_transcription, summary as pii_summary
+from . import retention
 from .database import ComplianceRule, ScheduledReport, Webhook, NotificationConfig
 from .action_items import detect_action_items
 from .report_scheduler import get_scheduler
@@ -132,6 +134,11 @@ async def startup_event():
         # Initialize scheduler and load all active schedules
         scheduler = get_scheduler()
         scheduler.reload_all_schedules(db)
+
+        # The daily retention purge, when RETENTION_DAYS or AUDIT_RETENTION_DAYS is set.
+        if retention.schedule(scheduler.scheduler):
+            print(f"Retention: analyses {settings.RETENTION_DAYS or 'kept'} days, "
+                  f"audit log {settings.AUDIT_RETENTION_DAYS or 'kept'} days (daily purge scheduled)")
     except Exception as e:
         print(f"Error during startup: {str(e)}")
         traceback.print_exc()
@@ -152,6 +159,7 @@ async def analyze_audio(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("analysis:write"))
 ):
+    tmp_path = None
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
             tmp.write(await file.read())
@@ -170,7 +178,15 @@ async def analyze_audio(
             text = result["text"]
             language_info = {"whisper_detected": "en", "whisper_language_name": "English", "confidence": 0.5}
 
+        # Personal data is replaced before anything analyzes, stores or sends the transcript.
+        privacy = None
+        if settings.PII_REDACTION:
+            text, result, found = redact_transcription(text, result, names=settings.PII_REDACT_NAMES)
+            privacy = pii_summary(found)
+
         analysis = analyze_text(text)
+        if privacy:
+            analysis["pii"] = privacy
         token_explanations = explain_toxicity(text)
 
         # Speaker diarization
@@ -299,7 +315,8 @@ async def analyze_audio(
             "action_items": action_items_result,
             "summary": summary_result,
             "topics": topics_result,
-            "intent": intent_result
+            "intent": intent_result,
+            "privacy": privacy,
         }
 
         # Convert numpy types to native Python types for JSON serialization
@@ -354,17 +371,15 @@ async def analyze_audio(
             print(f"Warning: Failed to save analysis to database: {str(e)}")
             # Continue even if database save fails
 
-        # Clean up temp file
-        try:
-            os.unlink(tmp_path)
-        except:
-            pass
-
         return response_data
     except Exception as e:
         error_trace = traceback.format_exc()
         print(f"Analysis error: {error_trace}")
         raise HTTPException(status_code=500, detail=f"Failed to analyze audio: {str(e)}")
+    finally:
+        # The recording is never kept, whether the analysis worked or not.
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
 
 @app.get("/supported_languages")
@@ -394,6 +409,7 @@ async def analyze_batch(files: List[UploadFile] = File(...), db: Session = Depen
 
     # Process files
     for idx, file in enumerate(files):
+        tmp_path = None
         try:
             # Save file temporarily
             with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
@@ -404,8 +420,16 @@ async def analyze_batch(files: List[UploadFile] = File(...), db: Session = Depen
             result = model.transcribe(tmp_path)
             text = result["text"]
 
+            # Personal data is replaced before anything analyzes or stores the transcript.
+            privacy = None
+            if settings.PII_REDACTION:
+                text, result, found = redact_transcription(text, result, names=settings.PII_REDACT_NAMES)
+                privacy = pii_summary(found)
+
             # Analyze
             analysis = analyze_text(text)
+            if privacy:
+                analysis["pii"] = privacy
             token_explanations = explain_toxicity(text)
 
             # Prepare response data
@@ -413,7 +437,8 @@ async def analyze_batch(files: List[UploadFile] = File(...), db: Session = Depen
                 "filename": file.filename,
                 "transcription": text,
                 "analysis": analysis,
-                "explanation": token_explanations
+                "explanation": token_explanations,
+                "privacy": privacy,
             }
 
             # Save to database
@@ -421,19 +446,14 @@ async def analyze_batch(files: List[UploadFile] = File(...), db: Session = Depen
                 record = save_analysis(
                     db=db,
                     analysis_data=response_data,
-                    filename=file.filename
+                    filename=file.filename,
+                    user_id=_actor.id,
                 )
                 response_data["record_id"] = record.id
             except Exception as e:
                 print(f"Warning: Failed to save {file.filename} to database: {str(e)}")
 
             results.append(response_data)
-
-            # Clean up temp file
-            try:
-                os.unlink(tmp_path)
-            except:
-                pass
 
         except Exception as e:
             error_msg = f"Error processing {file.filename}: {str(e)}"
@@ -442,6 +462,10 @@ async def analyze_batch(files: List[UploadFile] = File(...), db: Session = Depen
                 "filename": file.filename,
                 "error": error_msg
             })
+        finally:
+            # The recording is never kept, whether its analysis worked or not.
+            if tmp_path and os.path.exists(tmp_path):
+                os.unlink(tmp_path)
 
     return {
         "total_files": len(files),
@@ -2399,6 +2423,33 @@ async def remove_member_from_team(
 async def health():
     """Liveness for load balancers and monitors; needs no sign-in and says nothing sensitive."""
     return {"status": "ok", "version": settings.APP_VERSION}
+
+
+@app.get("/api/privacy")
+async def privacy_policy(_actor: User = Depends(require_permission("analysis:read"))):
+    """What this deployment redacts and keeps, and when the retention purge last ran."""
+    return retention.policy()
+
+
+@app.post("/api/privacy/purge")
+async def purge_expired_data(
+    request: Request,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_permission("admin:all")),
+):
+    """Apply the retention policy now instead of waiting for the daily run (administrators)."""
+    if not (settings.RETENTION_DAYS or settings.AUDIT_RETENTION_DAYS):
+        raise HTTPException(status_code=400, detail="No retention period is set (RETENTION_DAYS, AUDIT_RETENTION_DAYS)")
+    try:
+        deleted = retention.purge_expired(db)
+    except Exception as e:
+        audit_record(db, action="retention.purge", request=request, user=actor, status="failure",
+                     details={"error": str(e)[:200]})
+        raise HTTPException(status_code=500, detail="The retention purge failed; nothing further was deleted")
+    audit_record(db, action="retention.purge", request=request, user=actor, resource_type="analysis_records",
+                 details={**deleted, "retention_days": settings.RETENTION_DAYS,
+                          "audit_retention_days": settings.AUDIT_RETENTION_DAYS})
+    return {"deleted": deleted, "policy": retention.policy()}
 
 
 @app.get("/api/audit-logs")
