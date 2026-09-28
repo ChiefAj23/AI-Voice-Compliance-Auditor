@@ -12,8 +12,9 @@ Detection is pattern-based with validation, so it is fast and predictable:
   and a card number with one digit wrong is still a card number)
 - US Social Security numbers written 123-45-6789 or 123 45 6789 (never-issued ranges excluded),
   or nine digits right after "social security" / "SSN"
-- email addresses (also spoken: "jane at example dot com"), phone numbers (North American and
-  international), IBANs that pass the mod-97 check
+- email addresses (also spoken: "jane at example dot com", or with the "at" merged into a word
+  right after "my email is"), phone numbers (North American and international), IBANs that pass
+  the mod-97 check
 - account numbers, CVV codes, PINs, card expiry dates and dates of birth when the words just
   before them say what they are
 - any other run of nine or more digits (an identifier of some kind), kept apart from amounts such
@@ -67,11 +68,14 @@ _PATTERNS: List[Tuple[str, "re.Pattern[str]", int]] = [
         r"\b[A-Za-z0-9._%+-]{1,64}?(?:[\s,]+dot[\s,]+[A-Za-z0-9._%+-]{1,64}?){0,4}[\s.,]+at[\s.,]+[A-Za-z0-9-]{1,63}"
         r"(?:(?:[\s.,]+dot[\s.,]+|\.)[A-Za-z0-9-]{1,63}){0,4}?(?:[\s.,]+dot[\s.,]+|\.)"
         r"(?:com|net|org|edu|gov|io|co|uk|us|ca|de|fr|in|info|biz)\b", re.IGNORECASE), 0),
+    ("email", re.compile(
+        r"\be-?mail(?:\s+address)?(?:\s+is|:)?\s+([A-Za-z0-9._%+-]{1,64}\.(?:com|net|org|edu|gov|io|co|uk|us|ca|de|fr|in|info|biz))\b",
+        re.IGNORECASE), 1),
     ("iban", re.compile(r"\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{4}){2,7}(?:[ ]?[A-Z0-9]{1,3})?\b"), 0),
     ("card_number", re.compile(
         r"\b(?:card|credit|debit|visa|master ?card|amex|american express|discover)\b\D{0,80}?"
-        r"(?<![\d,.-])((?:\d[ ,.-]?){11,18}\d)(?![\d,.-]*\d)", re.IGNORECASE), 1),
-    ("card_number", re.compile(r"(?<![\d,.-])(?:\d[ ,.-]?){12,18}\d(?![\d-])"), 0),
+        r"(?<![\d,.-])((?:\d[ ,.-]{0,2}){11,18}\d)(?![\d,.-]*\d)", re.IGNORECASE), 1),
+    ("card_number", re.compile(r"(?<![\d,.-])(?:\d[ ,.-]{0,2}){12,18}\d(?![\d-])"), 0),
     ("ssn", re.compile(r"(?<![\d-])(?!000|666|9\d\d)\d{3}[- ](?!00)\d{2}[- ](?!0000)\d{4}(?![\d-])"), 0),
     ("ssn", re.compile(r"\b(?:social security(?: number)?|ssn|social)\b\D{0,20}?(\d{9})\b", re.IGNORECASE), 1),
     ("cvv", re.compile(
@@ -80,7 +84,7 @@ _PATTERNS: List[Tuple[str, "re.Pattern[str]", int]] = [
     ("pin", re.compile(r"\b(?:pin(?: number| code)?|passcode|pass code)\b\D{0,15}?(\d{4,8})\b", re.IGNORECASE), 1),
     ("card_expiry", re.compile(
         r"\b(?:expir\w*(?: date)?|exp(?:\.|iry)? date|valid (?:thru|through|until))\b\D{0,15}?"
-        r"(\d[\w /.-]{0,15}?\d{2})\b", re.IGNORECASE), 1),
+        r"(\d[\w ,/.-]{0,15}?\d{2})\b", re.IGNORECASE), 1),
     ("date_of_birth", re.compile(rf"\b(?:date of birth|birth ?date|birthday|d\.?o\.?b\.?|born on)\b\D{{0,15}}?({_DATE})", re.IGNORECASE), 1),
     ("account_number", re.compile(
         r"\b(?:account|acct|member|policy|customer|routing|reference|confirmation)"

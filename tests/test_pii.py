@@ -38,8 +38,12 @@ def test_personal_data_is_replaced(text, kind):
     assert TOKENS[kind] in result.text
 
 
-# What Whisper really wrote for a synthetic call (see the PR): digits regrouped with commas and
-# some dropped, punctuation inside a spoken email, "slash" misheard as "strobe".
+# What Whisper (small) really wrote for a synthetic call voiced by macOS's British "Daniel" voice.
+# The voice read each group of card digits as a number ("four thousand one hundred and eleven...")
+# and the slash in "09/28" as "stroke". Whisper wrote the digits back as one long number with commas,
+# heard "stroke" as "strobe", and put punctuation inside the spoken email. Read digit by digit, the
+# way a person reads a card, Whisper gets every digit right; only the punctuation between groups
+# varies, which the last cases cover.
 @pytest.mark.parametrize("text, counts, expected", [
     ("Please read me the card number. It is 4111,111,111,111. The expiration date is 09 strobe 28. "
      "And the security code is 123.",
@@ -56,6 +60,15 @@ def test_personal_data_is_replaced(text, kind):
      {"email": 1},
      "My email is [EMAIL] and my phone number is [PHONE]."),
     ("it's jane dot doe at example dot com", {"email": 1}, "it's [EMAIL]"),
+    # Read the way a person would (digit by digit, "zero nine, twenty-eight", "jane dot doe at
+    # example dot com"), transcribed by Whisper small at temperature 0.
+    ("It is 4111. 1111. 1111. 1111.", {"card_number": 1}, "It is [CARD]."),
+    ("The expiration date is 09.28.", {"card_expiry": 1}, "The expiration date is [EXPIRY]."),
+    ("The expiry is 09, 28, and the security code is 123.", {"card_expiry": 1, "cvv": 1},
+     "The expiry is [EXPIRY], and the security code is [CVV]."),
+    ("The expiry is 0.928.", {"card_expiry": 1}, "The expiry is [EXPIRY]."),
+    ("My email is jane.doatexample.com", {"email": 1}, "My email is [EMAIL]"),
+    ("My phone number is 212-555-0199.", {"phone": 1}, "My phone number is [PHONE]."),
 ])
 def test_what_speech_to_text_really_writes(text, counts, expected):
     result = redact(text)
@@ -70,6 +83,8 @@ def test_what_speech_to_text_really_writes(text, counts, expected):
     "Your order 12345 ships in 2026.",
     "Card ending in 1111 is on file.",
     "The refund of $1,250,000.00 was approved, it costs 4,111.11.",
+    "Scores this week were 87. 99. 85. 91. 77.",
+    "Visit northwind.com for your bill.",
     "Press 1 for billing or 2 for support.",
     "My account is locked and customer service was great.",
     "Oh no, one two three, that is not right.",  # three spoken digits are not a number
